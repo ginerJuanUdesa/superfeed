@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# unyapper
+unyapper.log
+.playwright-mcp/
+grid-2-modules.png
