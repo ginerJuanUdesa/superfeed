@@ -232,27 +232,29 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
   const empty = visibleItems && visibleItems.length === 0;
 
   return (
-    <div className="group relative h-full w-full rounded-2xl overflow-hidden cursor-move">
-      {/* backdrop layers — same look as before */}
-      <div className="absolute inset-0 bg-gradient-to-br from-yellow-300/25 via-transparent to-orange-400/20 pointer-events-none" />
-      <div className="absolute inset-0 bg-white/85 backdrop-blur-md" />
-      <div className="absolute inset-0 rounded-2xl ring-1 ring-white/30 pointer-events-none" />
-      <div className="absolute inset-0 rounded-2xl shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_30px_-10px_rgba(0,0,0,0.4)] pointer-events-none" />
-      {/* watermark logo */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/logos/hf.png"
-          alt=""
-          className="w-[55%] max-w-[240px] h-auto drop-shadow-[0_6px_18px_rgba(255,180,0,0.35)] opacity-25"
-          draggable={false}
-        />
+    <div className="panel group h-full w-full cursor-move flex flex-col">
+      <div className="panel-header shrink-0">
+        <span className="panel-header-tag">HuggingFace</span>
+        <span className="panel-header-meta mono">
+          {visibleItems ? String(visibleItems.length).padStart(2, "0") : "00"} items
+        </span>
+        {loading && (
+          <span className="panel-header-meta mono ml-auto text-[var(--accent)]">
+            loading
+          </span>
+        )}
       </div>
 
-      {/* cards overlay */}
-      <div className="relative h-full w-full overflow-y-auto">
+      <div className="relative flex-1 min-h-0 overflow-y-auto">
         {error && (
-          <div className="m-3 px-3 py-2 text-[11px] text-red-700 bg-red-50/95 border border-red-200 rounded-md">
+          <div
+            className="m-3 px-3 py-2 text-xs rounded-md"
+            style={{
+              color: "var(--danger)",
+              background: "rgba(216, 91, 91, 0.08)",
+              border: "1px solid rgba(216, 91, 91, 0.25)",
+            }}
+          >
             {error}
           </div>
         )}
@@ -269,24 +271,37 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
                     href={item.url}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="block rounded-lg overflow-hidden bg-white/90 backdrop-blur border border-neutral-200/80 hover:border-neutral-300 hover:bg-white shadow-sm transition-colors"
+                    className="feed-card block"
                     draggable={false}
                   >
                     <div
-                      className="flex items-baseline gap-2 px-3.5 py-1.5 min-w-0"
+                      className="flex items-center gap-2 px-3 py-1.5 min-w-0"
                       style={{ backgroundColor: barColor, color: barText }}
                     >
+                      {item.avatarUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={item.avatarUrl}
+                          alt=""
+                          className="shrink-0 w-5 h-5 rounded-full object-cover"
+                          style={{
+                            boxShadow: `0 0 0 1px ${barText}`,
+                            background: barText,
+                          }}
+                          draggable={false}
+                        />
+                      )}
                       <span className="text-[11px] font-semibold truncate">{item.author}</span>
                       <span
-                        className="text-[9px] uppercase tracking-[0.14em] font-semibold shrink-0 bg-white rounded px-1.5 py-[1px] leading-[1.4]"
-                        style={{ color: barColor }}
+                        className="text-[9px] uppercase tracking-[0.14em] font-semibold shrink-0 rounded px-1.5 py-[1px] leading-[1.4]"
+                        style={{ background: barText, color: barColor }}
                       >
                         {KIND_LABEL[item.kind]}
                       </span>
                       {item.isUpdate && (
                         <span
-                          className="text-[9px] uppercase tracking-[0.14em] font-semibold shrink-0 bg-white rounded px-1.5 py-[1px] leading-[1.4]"
-                          style={{ color: barColor }}
+                          className="text-[9px] uppercase tracking-[0.14em] font-semibold shrink-0 rounded px-1.5 py-[1px] leading-[1.4]"
+                          style={{ background: barText, color: barColor }}
                         >
                           updated
                         </span>
@@ -294,30 +309,30 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
                     </div>
                     <div className="px-3.5 pt-1.5 pb-2.5">
                       <div className="flex items-baseline gap-2 min-w-0">
-                        <span className="text-sm font-medium text-neutral-900 leading-tight truncate">
+                        <span className="text-sm font-medium text-[var(--text)] leading-tight truncate">
                           {item.name}
                         </span>
-                        <span className="text-[10px] text-neutral-400 shrink-0">
+                        <span className="text-[10px] text-[var(--text-faint)] shrink-0 mono">
                           {relativeTime(item.lastModified)}
                         </span>
                       </div>
                       {summary ? (
-                        <div className="mt-1.5 text-xs text-neutral-700 leading-snug">
+                        <div className="mt-1.5 text-xs text-[var(--text-muted)] leading-snug">
                           {summary}
                         </div>
                       ) : item.lastCommit ? (
-                        <div className="mt-1.5 text-xs text-neutral-500 line-clamp-2 leading-snug italic">
+                        <div className="mt-1.5 text-xs text-[var(--text-faint)] line-clamp-2 leading-snug italic">
                           {item.lastCommit}
                           {item.lastCommitBy && (
-                            <span className="text-neutral-400"> — {item.lastCommitBy}</span>
+                            <span> · {item.lastCommitBy}</span>
                           )}
                         </div>
                       ) : item.description ? (
-                        <div className="mt-1.5 text-xs text-neutral-500 line-clamp-2 leading-snug italic">
+                        <div className="mt-1.5 text-xs text-[var(--text-faint)] line-clamp-2 leading-snug italic">
                           {item.description}
                         </div>
                       ) : (
-                        <div className="mt-1.5 text-[10px] text-neutral-400 italic">
+                        <div className="mt-1.5 text-[10px] text-[var(--text-faint)] italic">
                           summarizing…
                         </div>
                       )}
@@ -329,16 +344,15 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
           </ul>
         )}
         {empty && !error && (
-          <div className="absolute bottom-2 inset-x-2 text-center text-[10px] text-neutral-500/80">
+          <div className="absolute bottom-3 inset-x-3 text-center text-xs text-[var(--text-faint)]">
             {anyKinds.length === 0
-              ? "Nothing selected — open the menu to pick kinds"
+              ? "No kinds selected. Open the menu to pick some."
               : "No matching items yet."}
           </div>
         )}
       </div>
 
-      {/* burger top-left, hover-only */}
-      <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+      <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex items-center gap-1">
         <BurgerMenu
           releaseKinds={releaseKinds}
           updateKinds={updateKinds}
@@ -349,27 +363,18 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
             onUpdateConfig(module.id, { ...module.config, updateKinds: next })
           }
         />
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove(module.id);
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="no-drag w-7 h-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--surface-max)] transition-colors text-lg leading-none"
+          title="Remove module"
+        >
+          ×
+        </button>
       </div>
-
-      {/* loading dot */}
-      {loading && (
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 text-[9px] uppercase tracking-widest text-neutral-500/70 pulse-glow pointer-events-none">
-          loading
-        </div>
-      )}
-
-      {/* remove top-right, hover-only */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove(module.id);
-        }}
-        onMouseDown={(e) => e.stopPropagation()}
-        className="no-drag absolute top-2 right-2 w-6 h-6 rounded-full bg-white/60 backdrop-blur text-neutral-500 hover:text-red-500 hover:bg-white opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center text-base leading-none shadow-sm z-10"
-        title="Remove"
-      >
-        ×
-      </button>
     </div>
   );
 }
@@ -405,21 +410,27 @@ function BurgerMenu({
           setOpen((o) => !o);
         }}
         onMouseDown={(e) => e.stopPropagation()}
-        className="w-6 h-6 rounded text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100 flex flex-col items-center justify-center gap-[3px]"
-        title="Configure"
+        className="w-7 h-7 rounded-md text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-max)] flex flex-col items-center justify-center gap-[3px] transition-colors"
+        title="Configure module"
       >
-        <span className="w-3.5 h-[2px] bg-current rounded" />
-        <span className="w-3.5 h-[2px] bg-current rounded" />
-        <span className="w-3.5 h-[2px] bg-current rounded" />
+        <span className="w-3.5 h-[1.5px] bg-current rounded" />
+        <span className="w-3.5 h-[1.5px] bg-current rounded" />
+        <span className="w-3.5 h-[1.5px] bg-current rounded" />
       </button>
       {open && (
         <div
-          className="absolute top-8 left-0 min-w-[170px] rounded-lg border border-black/10 bg-white shadow-[0_10px_30px_-8px_rgba(0,0,0,0.35)] py-1.5 z-20"
+          className="absolute top-9 right-0 min-w-[190px] py-1.5 z-20"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
+          style={{
+            background: "var(--surface-hi)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            boxShadow: "0 24px 48px -20px rgba(0,0,0,0.85)",
+          }}
         >
           <KindSection title="Releases" selected={releaseKinds} onChange={onChangeReleases} />
-          <div className="mt-1 border-t border-neutral-200/70" />
+          <div className="my-1 h-px bg-[var(--border)]" />
           <KindSection title="Updates" selected={updateKinds} onChange={onChangeUpdates} />
         </div>
       )}
@@ -444,7 +455,7 @@ function KindSection({
   };
   return (
     <>
-      <div className="px-3 pt-1.5 pb-1 text-[10px] uppercase tracking-wider text-neutral-400 font-semibold">
+      <div className="px-3 pt-1.5 pb-1 text-[11px] text-[var(--text-faint)] font-medium">
         {title}
       </div>
       {HF_KINDS.map(({ key, label }) => {
@@ -452,13 +463,13 @@ function KindSection({
         return (
           <label
             key={key}
-            className="flex items-center gap-2 px-3 py-1 text-xs text-neutral-800 hover:bg-neutral-100 cursor-pointer"
+            className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-[var(--text)] hover:bg-[var(--surface-max)] cursor-pointer"
           >
             <input
               type="checkbox"
               checked={checked}
               onChange={() => toggle(key)}
-              className="accent-yellow-500"
+              className="accent-[var(--accent)]"
             />
             <span>{label}</span>
           </label>

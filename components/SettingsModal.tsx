@@ -8,13 +8,19 @@ const LEGACY_KEY = "unyapper:credentials:v1";
 export interface GmailAccount {
   label: string;
   refreshToken: string;
+  clientId: string;
+  clientSecret: string;
 }
+
+export type ThemeMode = "system" | "light" | "dark";
 
 export interface Settings {
   startDate: string;
-  gmailClientId: string;
-  gmailClientSecret: string;
+  themeMode: ThemeMode;
   gmailAccounts: GmailAccount[];
+  /** Legacy: pre-per-account shared OAuth client. Backfilled into accounts. */
+  gmailClientId?: string;
+  gmailClientSecret?: string;
   /** Legacy: single-account refresh token. Migrated to gmailAccounts[0]. */
   gmailRefreshToken?: string;
   hfUsername: string;
@@ -26,8 +32,7 @@ export interface Settings {
 
 const EMPTY: Settings = {
   startDate: "",
-  gmailClientId: "",
-  gmailClientSecret: "",
+  themeMode: "system",
   gmailAccounts: [],
   hfUsername: "",
   hfToken: "",
@@ -49,13 +54,28 @@ export function loadSettings(): Settings {
       localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_KEY);
     if (!raw) return EMPTY;
     const parsed = { ...EMPTY, ...JSON.parse(raw) } as Settings;
+    const sharedId = parsed.gmailClientId ?? "";
+    const sharedSecret = parsed.gmailClientSecret ?? "";
     // Migrate legacy single-account refresh token into the accounts list.
     if (!parsed.gmailAccounts?.length && parsed.gmailRefreshToken) {
       parsed.gmailAccounts = [
-        { label: "primary", refreshToken: parsed.gmailRefreshToken },
+        {
+          label: "primary",
+          refreshToken: parsed.gmailRefreshToken,
+          clientId: sharedId,
+          clientSecret: sharedSecret,
+        },
       ];
     }
     parsed.gmailAccounts ??= [];
+    // Backfill any accounts missing their own client from the legacy shared one.
+    parsed.gmailAccounts = parsed.gmailAccounts.map((a) => ({
+      label: a.label ?? "",
+      refreshToken: a.refreshToken ?? "",
+      clientId: a.clientId || sharedId || "",
+      clientSecret: a.clientSecret || sharedSecret || "",
+    }));
+    parsed.themeMode ??= "system";
     return parsed;
   } catch {
     return EMPTY;
@@ -64,6 +84,21 @@ export function loadSettings(): Settings {
 
 function saveSettings(s: Settings) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+}
+
+/**
+ * Reflect the user's theme preference onto the document root. "system" clears
+ * the attribute so CSS `prefers-color-scheme` decides; "light" / "dark" force
+ * the palette regardless of OS setting.
+ */
+export function applyThemeMode(mode: ThemeMode) {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  if (mode === "system") {
+    root.removeAttribute("data-theme");
+  } else {
+    root.setAttribute("data-theme", mode);
+  }
 }
 
 export default function SettingsModal({
@@ -94,6 +129,14 @@ export default function SettingsModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Live preview: as the user clicks Light / Dark / System while the modal is
+  // open, the whole page shifts immediately so they can see what they're
+  // picking. Must run before the early-return below so hook order is stable.
+  useEffect(() => {
+    if (!open) return;
+    applyThemeMode(settings.themeMode);
+  }, [open, settings.themeMode]);
+
   if (!open) return null;
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => {
@@ -103,73 +146,75 @@ export default function SettingsModal({
 
   const save = () => {
     saveSettings(settings);
+    applyThemeMode(settings.themeMode);
     setDirty(false);
     onClose();
   };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ background: "rgba(0, 0, 0, 0.6)" }}
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg mx-4 rounded-2xl border border-white/15 bg-[rgba(20,18,40,0.95)] shadow-[0_20px_60px_-10px_rgba(80,50,200,0.6)] overflow-hidden"
+        className="w-full max-w-lg overflow-hidden"
         onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius)",
+          boxShadow: "0 40px 80px -20px rgba(0, 0, 0, 0.85)",
+        }}
       >
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-          <h2 className="text-sm font-semibold bg-gradient-to-r from-violet-300 via-indigo-200 to-sky-300 bg-clip-text text-transparent">
-            Settings
-          </h2>
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--border)]">
+          <h2 className="text-base font-semibold text-[var(--text)]">Settings</h2>
           <button
             onClick={onClose}
-            className="text-white/50 hover:text-white text-xl leading-none px-1"
+            className="text-[var(--text-muted)] hover:text-[var(--text)] text-xl leading-none w-7 h-7 flex items-center justify-center rounded-md hover:bg-[var(--surface-max)] transition-colors"
+            title="Close"
           >
             ×
           </button>
         </div>
 
-        <div className="px-5 py-4 max-h-[70vh] overflow-y-auto space-y-6">
-          <Section title="General" hint="Start collecting and summarizing from this date onwards">
+        <div className="px-5 py-5 max-h-[70vh] overflow-y-auto space-y-6">
+          <Section title="General" hint="Start date and page theme">
             <DateField
               label="Start date"
               value={settings.startDate}
               onChange={(v) => set("startDate", v)}
             />
+            <ThemeField
+              value={settings.themeMode}
+              onChange={(v) => set("themeMode", v)}
+            />
           </Section>
 
-          <Section title="Gmail" hint="Shared OAuth client + one refresh token per account">
-            <Field label="Client ID" value={settings.gmailClientId} onChange={(v) => set("gmailClientId", v)} />
-            <Field label="Client Secret" value={settings.gmailClientSecret} onChange={(v) => set("gmailClientSecret", v)} secret />
+          <Section title="Gmail" hint="One OAuth client per account. All four fields required.">
             <GmailAccountsField
               accounts={settings.gmailAccounts}
               onChange={(v) => set("gmailAccounts", v)}
             />
           </Section>
 
-          <Section title="HuggingFace" hint="Your username drives the feed; token only for private repos">
+          <Section title="HuggingFace" hint="Your username drives the feed. Token only for private repos.">
             <Field label="Username" value={settings.hfUsername} onChange={(v) => set("hfUsername", v)} placeholder="e.g. ginerjuan" />
-            <Field label="HF Token" value={settings.hfToken} onChange={(v) => set("hfToken", v)} secret />
+            <Field label="Access token" value={settings.hfToken} onChange={(v) => set("hfToken", v)} secret />
           </Section>
 
-          <Section title="LLM" hint="Pick one: Anthropic or a local LLM exposed over HTTP (OpenAI-compatible)">
-            <Field label="Anthropic API Key" value={settings.anthropicApiKey} onChange={(v) => set("anthropicApiKey", v)} secret />
+          <Section title="LLM" hint="Pick one: Anthropic key, or a local OpenAI-compatible URL">
+            <Field label="Anthropic API key" value={settings.anthropicApiKey} onChange={(v) => set("anthropicApiKey", v)} secret />
             <Field label="Local LLM URL" value={settings.localLlmUrl} onChange={(v) => set("localLlmUrl", v)} placeholder="http://host:port/v1/chat/completions" />
-            <Field label="Local LLM Model" value={settings.localLlmModel} onChange={(v) => set("localLlmModel", v)} placeholder="model name reported by the server" />
+            <Field label="Local LLM model" value={settings.localLlmModel} onChange={(v) => set("localLlmModel", v)} placeholder="model name reported by the server" />
           </Section>
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-white/10 bg-black/20">
-          <button
-            onClick={onClose}
-            className="text-xs px-3 py-1.5 rounded border border-white/15 text-white/70 hover:bg-white/5"
-          >
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[var(--border)]" style={{ background: "var(--surface-hi)" }}>
+          <button onClick={onClose} className="btn btn-ghost">
             Cancel
           </button>
-          <button
-            onClick={save}
-            disabled={!dirty}
-            className="text-xs px-3 py-1.5 rounded border border-violet-400/50 bg-violet-500/20 text-violet-100 hover:bg-violet-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
+          <button onClick={save} disabled={!dirty} className="btn btn-primary">
             Save
           </button>
         </div>
@@ -189,11 +234,11 @@ function Section({
 }) {
   return (
     <div>
-      <div className="flex items-baseline justify-between mb-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-white/80">{title}</h3>
-        <span className="text-[10px] text-white/40">{hint}</span>
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold text-[var(--text)]">{title}</h3>
+        <p className="text-xs text-[var(--text-muted)] mt-0.5">{hint}</p>
       </div>
-      <div className="space-y-2">{children}</div>
+      <div className="space-y-2.5">{children}</div>
     </div>
   );
 }
@@ -209,14 +254,56 @@ function DateField({
 }) {
   return (
     <label className="block">
-      <span className="text-[11px] text-white/50 block mb-1">{label}</span>
+      <span className="text-xs text-[var(--text-muted)] block mb-1.5">{label}</span>
       <input
         type="date"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-2.5 py-1.5 text-xs bg-black/30 border border-white/10 rounded focus:border-violet-400/50 focus:outline-none text-white [color-scheme:dark]"
+        className="field-input [color-scheme:dark]"
       />
     </label>
+  );
+}
+
+function ThemeField({
+  value,
+  onChange,
+}: {
+  value: ThemeMode;
+  onChange: (v: ThemeMode) => void;
+}) {
+  const options: { key: ThemeMode; label: string }[] = [
+    { key: "system", label: "System" },
+    { key: "light", label: "Light" },
+    { key: "dark", label: "Dark" },
+  ];
+  return (
+    <div>
+      <div className="text-xs text-[var(--text-muted)] mb-1.5">Appearance</div>
+      <div
+        className="inline-flex p-0.5 rounded-md gap-0.5"
+        style={{ background: "var(--surface-max)", border: "1px solid var(--border)" }}
+      >
+        {options.map((opt) => {
+          const active = value === opt.key;
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => onChange(opt.key)}
+              className="px-3 py-1 text-xs rounded transition-colors"
+              style={{
+                background: active ? "var(--surface)" : "transparent",
+                color: active ? "var(--text)" : "var(--text-muted)",
+                boxShadow: active ? "0 1px 2px rgba(0,0,0,0.25)" : "none",
+              }}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -231,13 +318,17 @@ function GmailAccountsField({
     onChange(accounts.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
   };
   const remove = (idx: number) => onChange(accounts.filter((_, i) => i !== idx));
-  const add = () => onChange([...accounts, { label: "", refreshToken: "" }]);
+  const add = () =>
+    onChange([
+      ...accounts,
+      { label: "", refreshToken: "", clientId: "", clientSecret: "" },
+    ]);
   return (
     <div className="space-y-2">
-      <div className="text-[11px] text-white/50">Accounts</div>
+      <div className="text-xs text-[var(--text-muted)]">Accounts</div>
       {accounts.length === 0 && (
-        <div className="text-[10px] text-white/30 italic">
-          No accounts yet — add one below.
+        <div className="text-xs text-[var(--text-faint)] italic">
+          No accounts yet. Add one below.
         </div>
       )}
       {accounts.map((a, i) => (
@@ -248,12 +339,8 @@ function GmailAccountsField({
           onRemove={() => remove(i)}
         />
       ))}
-      <button
-        type="button"
-        onClick={add}
-        className="text-[11px] px-2 py-1 rounded border border-white/15 text-white/70 hover:bg-white/5"
-      >
-        + Add account
+      <button type="button" onClick={add} className="btn btn-ghost h-8 text-xs">
+        Add account
       </button>
     </div>
   );
@@ -268,43 +355,75 @@ function AccountRow({
   onChange: (patch: Partial<GmailAccount>) => void;
   onRemove: () => void;
 }) {
-  const [reveal, setReveal] = useState(false);
+  const [revealRT, setRevealRT] = useState(false);
+  const [revealCS, setRevealCS] = useState(false);
   return (
-    <div className="flex items-start gap-1.5">
-      <input
-        value={account.label}
-        onChange={(e) => onChange({ label: e.target.value })}
-        placeholder="label"
-        className="w-24 px-2 py-1.5 text-xs bg-black/30 border border-white/10 rounded focus:border-violet-400/50 focus:outline-none text-white placeholder-white/25"
-        autoComplete="off"
-        spellCheck={false}
-      />
-      <div className="relative flex-1">
+    <div
+      className="space-y-2 p-2.5 rounded-md"
+      style={{ background: "var(--surface-hi)", border: "1px solid var(--border)" }}
+    >
+      <div className="flex items-center gap-2">
         <input
-          type={reveal ? "text" : "password"}
-          value={account.refreshToken}
-          onChange={(e) => onChange({ refreshToken: e.target.value })}
-          placeholder="refresh token"
-          className="w-full px-2 py-1.5 pr-14 text-xs bg-black/30 border border-white/10 rounded focus:border-violet-400/50 focus:outline-none text-white placeholder-white/25"
+          value={account.label}
+          onChange={(e) => onChange({ label: e.target.value })}
+          placeholder="label (e.g. work)"
+          className="field-input flex-1"
           autoComplete="off"
           spellCheck={false}
         />
         <button
           type="button"
-          onClick={() => setReveal((r) => !r)}
-          className="absolute right-1 top-0.5 text-[10px] text-white/40 hover:text-white/80 px-2 py-1"
+          onClick={onRemove}
+          className="text-[var(--text-muted)] hover:text-[var(--danger)] text-lg leading-none w-8 h-8 flex items-center justify-center rounded-md hover:bg-[var(--surface-max)] transition-colors"
+          title="Remove account"
         >
-          {reveal ? "hide" : "show"}
+          ×
         </button>
       </div>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="text-white/40 hover:text-red-400 text-sm leading-none px-1.5 py-1"
-        title="Remove account"
-      >
-        ×
-      </button>
+      <input
+        value={account.clientId}
+        onChange={(e) => onChange({ clientId: e.target.value })}
+        placeholder="client id"
+        className="field-input"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <div className="relative">
+        <input
+          type={revealCS ? "text" : "password"}
+          value={account.clientSecret}
+          onChange={(e) => onChange({ clientSecret: e.target.value })}
+          placeholder="client secret"
+          className="field-input pr-14"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          onClick={() => setRevealCS((r) => !r)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-[var(--text-muted)] hover:text-[var(--text)]"
+        >
+          {revealCS ? "hide" : "show"}
+        </button>
+      </div>
+      <div className="relative">
+        <input
+          type={revealRT ? "text" : "password"}
+          value={account.refreshToken}
+          onChange={(e) => onChange({ refreshToken: e.target.value })}
+          placeholder="refresh token"
+          className="field-input pr-14"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          onClick={() => setRevealRT((r) => !r)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-[var(--text-muted)] hover:text-[var(--text)]"
+        >
+          {revealRT ? "hide" : "show"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -325,14 +444,14 @@ function Field({
   const [reveal, setReveal] = useState(false);
   return (
     <label className="block">
-      <span className="text-[11px] text-white/50 block mb-1">{label}</span>
+      <span className="text-xs text-[var(--text-muted)] block mb-1.5">{label}</span>
       <div className="relative">
         <input
           type={secret && !reveal ? "password" : "text"}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="w-full px-2.5 py-1.5 pr-14 text-xs bg-black/30 border border-white/10 rounded focus:border-violet-400/50 focus:outline-none text-white placeholder-white/25"
+          className="field-input pr-14"
           autoComplete="off"
           spellCheck={false}
         />
@@ -340,7 +459,7 @@ function Field({
           <button
             type="button"
             onClick={() => setReveal((r) => !r)}
-            className="absolute right-1 top-1 text-[10px] text-white/40 hover:text-white/80 px-2 py-1"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-[var(--text-muted)] hover:text-[var(--text)]"
           >
             {reveal ? "hide" : "show"}
           </button>

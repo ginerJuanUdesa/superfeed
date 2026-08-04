@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { Layout, WidthProvider } from "react-grid-layout";
+import { GearSix, SquaresFour } from "@phosphor-icons/react";
 import Module from "./Module";
-import SettingsModal from "./SettingsModal";
+import SettingsModal, { applyThemeMode, loadSettings } from "./SettingsModal";
 import { HFKind, ModuleInstance, ModuleType } from "@/lib/types";
 
 const ResponsiveGrid = WidthProvider(GridLayout);
@@ -113,6 +114,9 @@ export default function Grid() {
     const s = loadState();
     setModules(s.modules);
     setLayout(s.layout);
+    // Apply the persisted theme choice on first paint so the shell doesn't
+    // flash the default dark palette when the user has picked light or system.
+    applyThemeMode(loadSettings().themeMode);
     setHydrated(true);
   }, []);
 
@@ -219,7 +223,11 @@ export default function Grid() {
   const moduleMap = useMemo(() => new Map(modules.map((m) => [m.id, m])), [modules]);
 
   if (!hydrated) {
-    return <div className="p-8 text-[var(--muted)] text-sm">Loading…</div>;
+    return (
+      <div className="p-8 text-[var(--text-faint)] text-sm mono">
+        loading
+      </div>
+    );
   }
 
   return (
@@ -231,7 +239,7 @@ export default function Grid() {
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <div
         ref={dropzoneRef}
-        className="p-4 sm:p-6 min-h-screen relative"
+        className="p-4 pr-16 sm:p-6 sm:pr-16 min-h-screen relative"
         onDragOver={onDragOverDrop}
         onDragLeave={onDragLeaveDrop}
         onDrop={onNativeDrop}
@@ -279,42 +287,48 @@ function Toolbar({
   onOpenSettings: () => void;
 }) {
   return (
-    <div className="toolbar-peek fixed right-0 top-0 bottom-0 w-8 z-50 group">
-      <div className="absolute right-0 top-0 bottom-0 flex flex-col items-center gap-6 pt-8 px-4 border-l border-white/8 bg-black/35 backdrop-blur-xl translate-x-full group-hover:translate-x-0 hover:translate-x-0 transition-transform duration-200 ease-out">
-        <SettingsButton onClick={onOpenSettings} />
-        <DraggableLogo type="gmail" onDragStart={onDragStart} />
-        <DraggableLogo type="hf" onDragStart={onDragStart} />
-      </div>
+    <div className="rail fixed right-0 top-0 bottom-0 w-14 z-50 flex flex-col items-center py-4 gap-2">
+      <RailButton onClick={onOpenSettings} title="Settings">
+        <GearSix size={20} weight="regular" />
+      </RailButton>
+      <div className="w-6 h-px bg-[var(--border)] my-1" />
+      <DraggableTile type="hf" onDragStart={onDragStart} />
+      <DraggableTile type="gmail" onDragStart={onDragStart} />
     </div>
   );
 }
 
-function SettingsButton({ onClick }: { onClick: () => void }) {
+function RailButton({
+  onClick,
+  title,
+  children,
+}: {
+  onClick: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <button
       onClick={onClick}
-      title="Settings"
-      className="text-white/50 hover:text-white transition-colors hover:scale-110 duration-150 cursor-pointer"
+      title={title}
+      className="rail-item w-10 h-10 flex items-center justify-center cursor-pointer"
     >
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-      </svg>
+      {children}
     </button>
   );
 }
 
-function DraggableLogo({
+function DraggableTile({
   type,
   onDragStart,
 }: {
   type: ModuleType;
   onDragStart: (t: ModuleType) => void;
 }) {
-  const label = type === "gmail" ? "Gmail" : "HuggingFace";
+  const label = type === "gmail" ? "Gmail inbox" : "HuggingFace feed";
   return (
     <div
-      className="cursor-grab active:cursor-grabbing select-none hover:scale-110 transition-transform"
+      className="rail-item w-10 h-10 flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
       draggable
       unselectable="on"
       onDragStart={(e) => {
@@ -323,29 +337,18 @@ function DraggableLogo({
       }}
       title={`Drag to add a ${label} module`}
     >
-      {type === "gmail" ? <GmailLogo /> : <HFLogo />}
+      {type === "gmail" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src="/logos/gmail.png" alt="Gmail" width={24} height={20} className="pointer-events-none" draggable={false} />
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src="/logos/hf.png" alt="HuggingFace" width={28} height={28} className="pointer-events-none" draggable={false} />
+      )}
     </div>
   );
 }
 
-function GmailLogo() {
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src="/logos/gmail.png" alt="Gmail" width={44} height={36} className="pointer-events-none" draggable={false} />;
-}
-
-function HFLogo() {
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src="/logos/hf.png" alt="HuggingFace" width={58} height={58} className="pointer-events-none -my-2" draggable={false} />;
-}
-
 function DropGhost({ slot }: { slot: { x: number; y: number; w: number; h: number } }) {
-  // Match RGL's exact placement math: with containerPadding=[0,0] and
-  // margin=[m,m], each item's pixel position is
-  //   left = x * (colWidth + m),   width = w * colWidth + (w-1) * m
-  // where colWidth = (containerWidth - (cols-1)*m) / cols.
-  // Rearranged as CSS calc() so no ResizeObserver is needed:
-  //   left  = x/cols * containerWidth  + x/cols * m
-  //   width = w/cols * containerWidth  - (cols-w)/cols * m
   const colPct = 100 / COLS;
   const left = `calc(${slot.x * colPct}% + ${(slot.x * MARGIN) / COLS}px)`;
   const width = `calc(${slot.w * colPct}% - ${((COLS - slot.w) * MARGIN) / COLS}px)`;
@@ -353,8 +356,16 @@ function DropGhost({ slot }: { slot: { x: number; y: number; w: number; h: numbe
   const height = slot.h * ROW_HEIGHT + (slot.h - 1) * MARGIN;
   return (
     <div
-      className="pointer-events-none absolute z-10 rounded-2xl bg-white/55 backdrop-blur-md ring-1 ring-white/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.4),0_8px_24px_-10px_rgba(0,0,0,0.35)]"
-      style={{ left, top, width, height }}
+      className="pointer-events-none absolute z-10"
+      style={{
+        left,
+        top,
+        width,
+        height,
+        background: "var(--accent-dim)",
+        boxShadow: "inset 0 0 0 1px var(--accent)",
+        borderRadius: "var(--radius)",
+      }}
     />
   );
 }
@@ -362,19 +373,25 @@ function DropGhost({ slot }: { slot: { x: number; y: number; w: number; h: numbe
 function EmptyHint() {
   return (
     <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
-      <div className="flex flex-col items-center gap-4 text-center float-hint">
-        <div className="w-12 h-12 rounded-2xl border border-white/15 bg-white/5 backdrop-blur-md flex items-center justify-center">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-white/70" aria-hidden>
-            <rect x="3" y="3" width="7" height="7" rx="1.5" />
-            <rect x="14" y="3" width="7" height="7" rx="1.5" />
-            <rect x="3" y="14" width="7" height="7" rx="1.5" />
-            <rect x="14" y="14" width="7" height="7" rx="1.5" />
-          </svg>
+      <div className="max-w-sm text-center flex flex-col items-center gap-5">
+        <div
+          className="w-14 h-14 flex items-center justify-center"
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            boxShadow: "0 12px 32px -18px rgba(0,0,0,0.7)",
+            color: "var(--text-muted)",
+          }}
+        >
+          <SquaresFour size={28} weight="regular" />
         </div>
-        <div className="space-y-1">
-          <div className="text-white/85 text-sm font-medium">Empty grid</div>
-          <div className="text-white/45 text-xs">
-            Hover the right edge <span className="pulse-glow text-[var(--accent)]">→</span> and drag a logo onto the grid
+        <div className="space-y-1.5">
+          <div className="text-[var(--text)] text-base font-medium">
+            Nothing here yet
+          </div>
+          <div className="text-[var(--text-muted)] text-sm leading-relaxed">
+            Drag a module from the rail on the right onto this canvas.
           </div>
         </div>
       </div>

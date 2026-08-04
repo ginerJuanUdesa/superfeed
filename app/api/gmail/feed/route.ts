@@ -5,9 +5,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 interface FeedBody {
-  clientId?: string;
-  clientSecret?: string;
-  accounts?: { label: string; refreshToken: string }[];
+  accounts?: {
+    label: string;
+    refreshToken: string;
+    clientId: string;
+    clientSecret: string;
+  }[];
   since?: string;
   maxPerAccount?: number;
 }
@@ -15,19 +18,25 @@ interface FeedBody {
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as FeedBody;
-    const clientId = (body.clientId ?? "").trim();
-    const clientSecret = (body.clientSecret ?? "").trim();
-    const accounts = (body.accounts ?? []).filter(
-      (a) => a.label?.trim() && a.refreshToken?.trim()
-    );
-    if (!clientId || !clientSecret) {
-      return NextResponse.json(
-        { error: "Gmail client id/secret required" },
-        { status: 400 }
-      );
-    }
+    const accounts = (body.accounts ?? [])
+      .filter((a) => a.label?.trim() && a.refreshToken?.trim())
+      .map((a) => ({
+        label: a.label,
+        refreshToken: a.refreshToken.trim(),
+        clientId: a.clientId?.trim() ?? "",
+        clientSecret: a.clientSecret?.trim() ?? "",
+      }));
     if (!accounts.length) {
       return NextResponse.json({ items: [] });
+    }
+    const missing = accounts.filter((a) => !a.clientId || !a.clientSecret);
+    if (missing.length) {
+      return NextResponse.json(
+        {
+          error: `Missing OAuth client for account(s): ${missing.map((m) => m.label).join(", ")}.`,
+        },
+        { status: 400 }
+      );
     }
 
     const results = await Promise.all(
@@ -35,8 +44,8 @@ export async function POST(req: NextRequest) {
         try {
           return await fetchInbox({
             account: a.label,
-            clientId,
-            clientSecret,
+            clientId: a.clientId,
+            clientSecret: a.clientSecret,
             refreshToken: a.refreshToken,
             since: body.since,
             max: body.maxPerAccount ?? 25,

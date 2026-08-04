@@ -2,173 +2,277 @@
 @import "react-grid-layout/css/styles.css";
 @import "react-resizable/css/styles.css";
 
+/*
+ * unyapper visual system: dark surface, single electric-blue accent, one
+ * corner-radius scale (12px), tinted shadows. No gradients, no glass, no
+ * decorative status dots, no infinite loops. Motion is CSS-only.
+ */
+
+/* Dark tokens are the default so the initial paint before hydration matches
+   what most users of a data workspace expect. Light overrides live below,
+   applied either explicitly via data-theme="light" or automatically when
+   the OS reports a light preference and no explicit choice has been made. */
 :root {
-  --panel: rgba(20, 18, 40, 0.55);
-  --panel-hover: rgba(30, 26, 55, 0.65);
-  --border: rgba(140, 130, 220, 0.18);
-  --text: #ececff;
-  --muted: #9c99c2;
-  --accent: #8b7dff;
-  --accent-2: #4fc3ff;
+  --bg:            #0a0a0a;   /* off-black, not pure */
+  --surface:       #131315;
+  --surface-hi:    #1a1a1d;
+  --surface-max:   #232327;
+  --border:        #26262a;
+  --border-hi:     #36363c;
+  --text:          #f4f4f5;
+  --text-muted:    #a1a1aa;
+  --text-faint:    #71717a;
+  --accent:        #4a90e2;
+  --accent-hi:     #6ea8e8;
+  --accent-dim:    rgba(74, 144, 226, 0.18);
+  --danger:        #d85b5b;
+  --ok:            #6db47c;
+  --radius:        12px;
+  --radius-sm:     8px;
+}
+
+/* Light palette. Explicit override wins over any OS media query. */
+:root[data-theme="light"] {
+  --bg:            #f7f7f8;
+  --surface:       #ffffff;
+  --surface-hi:    #f4f4f5;
+  --surface-max:   #e7e7ea;
+  --border:        #e4e4e7;
+  --border-hi:     #cfcfd4;
+  --text:          #18181b;
+  --text-muted:    #52525b;
+  --text-faint:    #a1a1aa;
+  --accent:        #2f6fc4;
+  --accent-hi:     #245aa3;
+  --accent-dim:    rgba(47, 111, 196, 0.14);
+  --danger:        #b93b3b;
+  --ok:            #3e8a52;
+}
+
+/* When the user picks "system" (no data-theme set) and the OS is light,
+   apply the same light tokens. The `:not([data-theme])` narrows this to the
+   unmarked state so explicit dark-mode always wins. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg:            #f7f7f8;
+    --surface:       #ffffff;
+    --surface-hi:    #f4f4f5;
+    --surface-max:   #e7e7ea;
+    --border:        #e4e4e7;
+    --border-hi:     #cfcfd4;
+    --text:          #18181b;
+    --text-muted:    #52525b;
+    --text-faint:    #a1a1aa;
+    --accent:        #2f6fc4;
+    --accent-hi:     #245aa3;
+    --accent-dim:    rgba(47, 111, 196, 0.14);
+    --danger:        #b93b3b;
+    --ok:            #3e8a52;
+  }
 }
 
 html, body {
   color: var(--text);
   min-height: 100vh;
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: var(--bg);
 }
 
 body {
-  background:
-    radial-gradient(1200px 800px at 12% 8%, rgba(167, 106, 255, 0.42), transparent 55%),
-    radial-gradient(1100px 700px at 88% 20%, rgba(72, 149, 255, 0.32), transparent 60%),
-    radial-gradient(900px 900px at 50% 108%, rgba(120, 40, 220, 0.35), transparent 60%),
-    radial-gradient(600px 400px at 90% 90%, rgba(255, 100, 200, 0.18), transparent 60%),
-    linear-gradient(140deg, #08051c 0%, #120c38 45%, #08122e 100%);
-  background-attachment: fixed;
-  position: relative;
+  background: var(--bg);
 }
 
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.35 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
-  opacity: 0.05;
-  mix-blend-mode: overlay;
+.mono {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background:
-    radial-gradient(1400px 600px at 50% -10%, rgba(255, 255, 255, 0.04), transparent 60%);
-}
-
+/* react-grid-layout tokens — flat placeholder, no glow, single accent stroke. */
 .react-grid-item.react-grid-placeholder {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2)) !important;
-  opacity: 0.22 !important;
-  border-radius: 14px !important;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25) inset,
-              0 12px 40px -12px rgba(139, 125, 255, 0.6);
-  transition: all 120ms ease;
+  background: var(--surface-hi) !important;
+  opacity: 0.55 !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 0 0 1px var(--accent) inset;
+  transition: none;
 }
 
 .react-grid-item {
-  transition: transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 180ms ease;
+  transition: transform 160ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-.react-grid-item.react-draggable-dragging {
-  transition: none;
-  z-index: 20;
-}
-
-.react-grid-item.resizing {
-  z-index: 20;
-}
+.react-grid-item.react-draggable-dragging { transition: none; z-index: 20; }
+.react-grid-item.resizing { z-index: 20; }
 
 .react-grid-item > .react-resizable-handle {
   background-image: none;
   opacity: 0;
   transition: opacity 120ms ease;
 }
-
-.react-grid-item:hover > .react-resizable-handle {
-  opacity: 1;
-}
+.react-grid-item:hover > .react-resizable-handle { opacity: 1; }
 
 .react-grid-item > .react-resizable-handle::after {
   content: "";
   position: absolute;
-  width: 12px;
-  height: 12px;
-  border-bottom: 2px solid rgba(80, 60, 140, 0.6);
-  border-right: 2px solid rgba(80, 60, 140, 0.6);
-  right: 5px;
-  bottom: 5px;
-  border-bottom-right-radius: 2px;
+  width: 10px;
+  height: 10px;
+  border-bottom: 1px solid var(--accent);
+  border-right: 1px solid var(--accent);
+  right: 7px;
+  bottom: 7px;
 }
-
-/* south-west handle: mirror the chevron and place it bottom-left */
 .react-grid-item > .react-resizable-handle-sw {
-  bottom: 0;
-  left: 0;
-  cursor: sw-resize;
-  transform: none;
+  bottom: 0; left: 0; cursor: sw-resize; transform: none;
 }
-
 .react-grid-item > .react-resizable-handle-sw::after {
-  right: auto;
-  left: 5px;
-  border-top: none;
-  border-right: none;
-  border-left: 2px solid rgba(80, 60, 140, 0.6);
-  border-bottom: 2px solid rgba(80, 60, 140, 0.6);
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 2px;
+  right: auto; left: 7px;
+  border-top: none; border-right: none;
+  border-left: 1px solid var(--accent);
+  border-bottom: 1px solid var(--accent);
   transform: rotate(270deg);
 }
 
-@keyframes gentle-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-4px); }
-}
-
-.float-hint {
-  animation: gentle-float 2.4s ease-in-out infinite;
-}
-
-@keyframes pulse-glow {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 0.8; }
-}
-
-.pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
-}
-
-/* Gmail cards: plain white body with the colored flap on top (see
-   GmailModule.tsx for the flap markup). Kept the sharp corners and paper-like
-   shadow but dropped the texture patterns per user request. */
-.envelope {
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 12px;
+/* Panel: shared shell for every module. Solid surface, hairline border, one
+   drop shadow, corners locked at 12px. */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.5) inset,
-    0 1px 2px rgba(0, 0, 0, 0.06),
-    0 8px 18px -10px rgba(0, 0, 0, 0.18);
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 12px 32px -18px rgba(0, 0, 0, 0.7);
   overflow: hidden;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.panel:hover {
+  border-color: var(--border-hi);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 20px 48px -20px rgba(0, 0, 0, 0.8);
+}
+
+.panel-header {
+  height: 48px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-hi);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.panel-header-tag {
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.panel-header-meta {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+/* Gmail envelope card: dark surface body + colored flap on top. Kept the
+   envelope silhouette (flap + tip in GmailModule.tsx) but the body now lives
+   inside the page's theme instead of jumping to white. */
+.envelope {
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 16px -8px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
 }
 .envelope:hover {
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.6) inset,
-    0 2px 4px rgba(0, 0, 0, 0.1),
-    0 14px 26px -10px rgba(0, 0, 0, 0.28);
+  transform: translateY(-1px);
+  border-color: var(--border-hi);
+  box-shadow: 0 12px 26px -10px rgba(0, 0, 0, 0.7);
 }
 
-/* Toolbar peek indicator: subtle vertical accent on right edge */
-.toolbar-peek::before {
-  content: "";
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 60px;
-  background: linear-gradient(180deg, transparent, var(--accent), transparent);
-  border-radius: 3px 0 0 3px;
-  opacity: 0.5;
-  transition: opacity 200ms ease;
+/* Feed card: shared shell for HF cards. Same visual system as .envelope so
+   both feeds read as members of the same page. */
+.feed-card {
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 16px -8px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+.feed-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-hi);
+  box-shadow: 0 12px 26px -10px rgba(0, 0, 0, 0.7);
 }
 
-.toolbar-peek:hover::before {
-  opacity: 0;
+/* Right rail: fixed solid strip, always visible. No slide-in. */
+.rail {
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+.rail-item {
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+  border: 1px solid transparent;
+}
+.rail-item:hover {
+  color: var(--accent-hi);
+  background: var(--accent-dim);
+  border-color: var(--border-hi);
+}
+.rail-item:active {
+  transform: translateY(1px);
+}
+
+/* Text button base */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #0a0a0a;
+}
+.btn-primary:hover { background: var(--accent-hi); }
+.btn-primary:active { transform: translateY(1px); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-ghost {
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+.btn-ghost:hover {
+  color: var(--text);
+  border-color: var(--border-hi);
+  background: var(--surface-hi);
+}
+
+/* Form field base — high-contrast placeholder, visible focus ring */
+.field-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.field-input::placeholder { color: var(--text-faint); }
+.field-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
