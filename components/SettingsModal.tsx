@@ -5,11 +5,18 @@ import { useEffect, useState } from "react";
 const STORAGE_KEY = "unyapper:settings:v1";
 const LEGACY_KEY = "unyapper:credentials:v1";
 
+export interface GmailAccount {
+  label: string;
+  refreshToken: string;
+}
+
 export interface Settings {
   startDate: string;
   gmailClientId: string;
   gmailClientSecret: string;
-  gmailRefreshToken: string;
+  gmailAccounts: GmailAccount[];
+  /** Legacy: single-account refresh token. Migrated to gmailAccounts[0]. */
+  gmailRefreshToken?: string;
   hfUsername: string;
   hfToken: string;
   anthropicApiKey: string;
@@ -21,7 +28,7 @@ const EMPTY: Settings = {
   startDate: "",
   gmailClientId: "",
   gmailClientSecret: "",
-  gmailRefreshToken: "",
+  gmailAccounts: [],
   hfUsername: "",
   hfToken: "",
   anthropicApiKey: "",
@@ -41,7 +48,15 @@ export function loadSettings(): Settings {
     const raw =
       localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_KEY);
     if (!raw) return EMPTY;
-    return { ...EMPTY, ...JSON.parse(raw) };
+    const parsed = { ...EMPTY, ...JSON.parse(raw) } as Settings;
+    // Migrate legacy single-account refresh token into the accounts list.
+    if (!parsed.gmailAccounts?.length && parsed.gmailRefreshToken) {
+      parsed.gmailAccounts = [
+        { label: "primary", refreshToken: parsed.gmailRefreshToken },
+      ];
+    }
+    parsed.gmailAccounts ??= [];
+    return parsed;
   } catch {
     return EMPTY;
   }
@@ -122,10 +137,13 @@ export default function SettingsModal({
             />
           </Section>
 
-          <Section title="Gmail" hint="Google OAuth — Client ID / Secret / Refresh Token">
+          <Section title="Gmail" hint="Shared OAuth client + one refresh token per account">
             <Field label="Client ID" value={settings.gmailClientId} onChange={(v) => set("gmailClientId", v)} />
             <Field label="Client Secret" value={settings.gmailClientSecret} onChange={(v) => set("gmailClientSecret", v)} secret />
-            <Field label="Refresh Token" value={settings.gmailRefreshToken} onChange={(v) => set("gmailRefreshToken", v)} secret />
+            <GmailAccountsField
+              accounts={settings.gmailAccounts}
+              onChange={(v) => set("gmailAccounts", v)}
+            />
           </Section>
 
           <Section title="HuggingFace" hint="Your username drives the feed; token only for private repos">
@@ -199,6 +217,95 @@ function DateField({
         className="w-full px-2.5 py-1.5 text-xs bg-black/30 border border-white/10 rounded focus:border-violet-400/50 focus:outline-none text-white [color-scheme:dark]"
       />
     </label>
+  );
+}
+
+function GmailAccountsField({
+  accounts,
+  onChange,
+}: {
+  accounts: GmailAccount[];
+  onChange: (v: GmailAccount[]) => void;
+}) {
+  const update = (idx: number, patch: Partial<GmailAccount>) => {
+    onChange(accounts.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
+  };
+  const remove = (idx: number) => onChange(accounts.filter((_, i) => i !== idx));
+  const add = () => onChange([...accounts, { label: "", refreshToken: "" }]);
+  return (
+    <div className="space-y-2">
+      <div className="text-[11px] text-white/50">Accounts</div>
+      {accounts.length === 0 && (
+        <div className="text-[10px] text-white/30 italic">
+          No accounts yet — add one below.
+        </div>
+      )}
+      {accounts.map((a, i) => (
+        <AccountRow
+          key={i}
+          account={a}
+          onChange={(patch) => update(i, patch)}
+          onRemove={() => remove(i)}
+        />
+      ))}
+      <button
+        type="button"
+        onClick={add}
+        className="text-[11px] px-2 py-1 rounded border border-white/15 text-white/70 hover:bg-white/5"
+      >
+        + Add account
+      </button>
+    </div>
+  );
+}
+
+function AccountRow({
+  account,
+  onChange,
+  onRemove,
+}: {
+  account: GmailAccount;
+  onChange: (patch: Partial<GmailAccount>) => void;
+  onRemove: () => void;
+}) {
+  const [reveal, setReveal] = useState(false);
+  return (
+    <div className="flex items-start gap-1.5">
+      <input
+        value={account.label}
+        onChange={(e) => onChange({ label: e.target.value })}
+        placeholder="label"
+        className="w-24 px-2 py-1.5 text-xs bg-black/30 border border-white/10 rounded focus:border-violet-400/50 focus:outline-none text-white placeholder-white/25"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <div className="relative flex-1">
+        <input
+          type={reveal ? "text" : "password"}
+          value={account.refreshToken}
+          onChange={(e) => onChange({ refreshToken: e.target.value })}
+          placeholder="refresh token"
+          className="w-full px-2 py-1.5 pr-14 text-xs bg-black/30 border border-white/10 rounded focus:border-violet-400/50 focus:outline-none text-white placeholder-white/25"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          onClick={() => setReveal((r) => !r)}
+          className="absolute right-1 top-0.5 text-[10px] text-white/40 hover:text-white/80 px-2 py-1"
+        >
+          {reveal ? "hide" : "show"}
+        </button>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="text-white/40 hover:text-red-400 text-sm leading-none px-1.5 py-1"
+        title="Remove account"
+      >
+        ×
+      </button>
+    </div>
   );
 }
 

@@ -196,6 +196,10 @@ export default function Grid() {
     const id = makeId();
     const title = type === "gmail" ? "Inbox" : "HF Feed";
     const allKinds = ["model", "dataset", "space", "paper"] as HFKind[];
+    // Both module types default to "everything included": HF gets all four
+    // kinds ticked in both columns; Gmail relies on excludedAccountLabels
+    // being absent to auto-tick every currently- and future-configured
+    // account.
     const config =
       type === "hf"
         ? { releaseKinds: allKinds, updateKinds: allKinds }

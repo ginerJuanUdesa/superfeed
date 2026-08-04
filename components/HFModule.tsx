@@ -175,7 +175,7 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
     const initSummaries: Record<string, string> = {};
     const pending: HFItem[] = [];
     for (const it of items) {
-      const k = keyFor(it.kind, it.id);
+      const k = keyFor(it.kind, it.id, it.isUpdate);
       const cachedSummary = getSummary(k);
       if (cachedSummary) initSummaries[k] = cachedSummary;
       else pending.push(it);
@@ -191,7 +191,7 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
     async function worker() {
       while (!cancelled && idx < pending.length) {
         const it = pending[idx++];
-        const k = keyFor(it.kind, it.id);
+        const k = keyFor(it.kind, it.id, it.isUpdate);
         try {
           const res = await fetch("/api/summarize", {
             method: "POST",
@@ -259,7 +259,7 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
         {visibleItems && visibleItems.length > 0 && (
           <ul className="p-2 space-y-2">
             {visibleItems.map((item) => {
-              const k = keyFor(item.kind, item.id);
+              const k = keyFor(item.kind, item.id, item.isUpdate);
               const summary = summaries[k];
               const barColor = authorColors[item.author] ?? FALLBACK_COLOR;
               const barText = readableOn(barColor);
@@ -273,7 +273,7 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
                     draggable={false}
                   >
                     <div
-                      className="brush-bar flex items-baseline gap-2 px-3.5 pt-1 pb-2.5 min-w-0 -mb-1"
+                      className="flex items-baseline gap-2 px-3.5 py-1.5 min-w-0"
                       style={{ backgroundColor: barColor, color: barText }}
                     >
                       <span className="text-[11px] font-semibold truncate">{item.author}</span>

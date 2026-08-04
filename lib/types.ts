@@ -12,11 +12,21 @@ export interface HFConfig {
   kinds?: HFKind[];
 }
 
+export interface GmailConfig {
+  /** Accounts the user explicitly UNCHECKED in the module. Any configured
+   *  account NOT in this list is included. This way freshly-dropped modules
+   *  default to all boxes ticked, and adding a new account in Settings
+   *  auto-includes it in every existing module. */
+  excludedAccountLabels?: string[];
+  /** Legacy: previously stored the OPT-IN list. Migrated to excludedAccountLabels at read time. */
+  accountLabels?: string[];
+}
+
 export interface ModuleInstance {
   id: string;
   type: ModuleType;
   title: string;
-  config: HFConfig & Record<string, unknown>;
+  config: HFConfig & GmailConfig & Record<string, unknown>;
 }
 
 export const HF_KINDS: { key: HFKind; label: string }[] = [
