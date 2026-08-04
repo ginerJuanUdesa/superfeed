@@ -1,50 +1,51 @@
 "use client";
 
 import { ModuleInstance } from "@/lib/types";
+import HFModule from "./HFModule";
 
 interface Props {
   module: ModuleInstance;
   onRemove: (id: string) => void;
-  onRename: (id: string, title: string) => void;
+  onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
 }
 
-const TYPE_BADGE: Record<string, { label: string; color: string }> = {
-  gmail: { label: "Gmail", color: "bg-red-500/15 text-red-400 border-red-500/30" },
-  hf: { label: "HuggingFace", color: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" },
-};
-
-export default function Module({ module, onRemove, onRename }: Props) {
-  const badge = TYPE_BADGE[module.type];
-
+function GmailWatermark() {
+  // eslint-disable-next-line @next/next/no-img-element
   return (
-    <div className="flex flex-col h-full w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] overflow-hidden">
-      <div className="module-drag-handle flex items-center justify-between px-3 py-2 border-b border-[var(--border)] bg-[var(--panel-hover)] select-none">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${badge.color}`}>
-            {badge.label}
-          </span>
-          <input
-            className="bg-transparent outline-none text-sm font-medium truncate min-w-0 focus:bg-[var(--bg)] rounded px-1"
-            value={module.title}
-            onChange={(e) => onRename(module.id, e.target.value)}
-            onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
-          />
-        </div>
-        <button
-          onClick={() => onRemove(module.id)}
-          onMouseDown={(e) => e.stopPropagation()}
-          className="text-[var(--muted)] hover:text-red-400 text-lg leading-none px-2 no-drag"
-          title="Remove"
-        >
-          ×
-        </button>
+    <img
+      src="/logos/gmail.png"
+      alt=""
+      className="w-1/2 max-w-[220px] h-auto drop-shadow-[0_6px_18px_rgba(234,67,53,0.35)] pointer-events-none"
+      draggable={false}
+    />
+  );
+}
+
+export default function Module({ module, onRemove, onUpdateConfig }: Props) {
+  if (module.type === "hf") {
+    return <HFModule module={module} onRemove={onRemove} onUpdateConfig={onUpdateConfig} />;
+  }
+  // Gmail placeholder — not implemented yet
+  return (
+    <div className="group relative h-full w-full rounded-2xl overflow-hidden cursor-move">
+      <div className="absolute inset-0 bg-gradient-to-br from-red-400/25 via-transparent to-blue-400/20 pointer-events-none" />
+      <div className="absolute inset-0 bg-white/85 backdrop-blur-md" />
+      <div className="absolute inset-0 rounded-2xl ring-1 ring-white/30 pointer-events-none" />
+      <div className="absolute inset-0 rounded-2xl shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_30px_-10px_rgba(0,0,0,0.4)] pointer-events-none" />
+      <div className="relative h-full w-full flex items-center justify-center">
+        <GmailWatermark />
       </div>
-      <div className="flex-1 overflow-auto p-3 text-sm text-[var(--muted)]">
-        <div className="flex items-center justify-center h-full text-xs">
-          Módulo {badge.label} — sin conectar todavía
-        </div>
-      </div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove(module.id);
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="no-drag absolute top-2 right-2 w-6 h-6 rounded-full bg-white/60 backdrop-blur text-neutral-500 hover:text-red-500 hover:bg-white opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center text-base leading-none shadow-sm"
+        title="Remove"
+      >
+        ×
+      </button>
     </div>
   );
 }
