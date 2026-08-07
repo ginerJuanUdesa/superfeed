@@ -3,6 +3,8 @@
 import { ModuleInstance } from "@/lib/types";
 import HFModule from "./HFModule";
 import GmailModule from "./GmailModule";
+import CalendarModule from "./CalendarModule";
+import GithubModule from "./GithubModule";
 
 interface Props {
   module: ModuleInstance;
@@ -16,6 +18,12 @@ export default function Module({ module, onRemove, onUpdateConfig }: Props) {
   }
   if (module.type === "gmail") {
     return <GmailModule module={module} onRemove={onRemove} onUpdateConfig={onUpdateConfig} />;
+  }
+  if (module.type === "calendar") {
+    return <CalendarModule module={module} onRemove={onRemove} onUpdateConfig={onUpdateConfig} />;
+  }
+  if (module.type === "github") {
+    return <GithubModule module={module} onRemove={onRemove} onUpdateConfig={onUpdateConfig} />;
   }
   return null;
 }

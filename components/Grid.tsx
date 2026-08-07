@@ -20,9 +20,12 @@ const MIN_H = 3;
 
 /**
  * Find a slot for a new module without displacing anything.
- * Prefer the requested (x,y). If it collides, try shrinking the module toward
- * (MIN_W, MIN_H), then sliding right/down. Falls back to the row below the
- * bottom of the current layout — which is guaranteed empty.
+ *
+ * Priority is LOCATION first, SIZE second: if the drop anchor sits in a
+ * pocket, we shrink the module to whatever fits at that anchor (largest
+ * area wins), instead of drifting away to place it at full size elsewhere.
+ * Only when nothing at all fits at the anchor do we search outward, and as a
+ * last resort we drop below the bottom of the layout — guaranteed empty.
  */
 function findFreeSlot(
   layout: Layout[],
@@ -51,23 +54,36 @@ function findFreeSlot(
     if (it.y + it.h > maxRow) maxRow = it.y + it.h;
   }
 
-  // Try progressively smaller sizes, starting from the requested corner.
-  for (let w = DEFAULT_W; w >= MIN_W; w--) {
-    for (let h = DEFAULT_H; h >= MIN_H; h--) {
-      const startX = Math.max(0, Math.min(COLS - w, wantX));
-      // Scan from the requested row down, then wrap up to 0.
-      for (let dy = 0; dy < maxRow + 1; dy++) {
-        const y = Math.max(0, wantY + dy);
-        for (let x = startX; x <= COLS - w; x++) {
-          if (fits(x, y, w, h)) return { x, y, w, h };
-        }
-        for (let x = 0; x < startX; x++) {
-          if (fits(x, y, w, h)) return { x, y, w, h };
-        }
-      }
+  const anchorY = Math.max(0, wantY);
+
+  // Enumerate every allowed (w, h) once, sorted by area DESC so the biggest
+  // shape that fits at the drop anchor wins.
+  const sizes: { w: number; h: number }[] = [];
+  for (let w = MIN_W; w <= DEFAULT_W; w++) {
+    for (let h = MIN_H; h <= DEFAULT_H; h++) {
+      sizes.push({ w, h });
     }
   }
-  // Everything full at every size — drop it on a brand-new row below the pile.
+  sizes.sort((a, b) => b.w * b.h - a.w * a.h || b.w - a.w);
+
+  // Step 1: fit at the drop anchor. Nudge x left just enough for wider sizes
+  // to stay inside the grid so the user's row intent still wins.
+  for (const { w, h } of sizes) {
+    const x = Math.max(0, Math.min(COLS - w, wantX));
+    if (fits(x, anchorY, w, h)) return { x, y: anchorY, w, h };
+  }
+
+  // Step 2: nothing fits at the anchor — search outward from (wantX, anchorY),
+  // scanning right/left across each row, then row by row downward.
+  for (const { w, h } of sizes) {
+    const startX = Math.max(0, Math.min(COLS - w, wantX));
+    for (let dy = 0; dy < maxRow + 1; dy++) {
+      const y = anchorY + dy;
+      for (let x = startX; x <= COLS - w; x++) if (fits(x, y, w, h)) return { x, y, w, h };
+      for (let x = 0; x < startX; x++) if (fits(x, y, w, h)) return { x, y, w, h };
+    }
+  }
+
   return { x: 0, y: maxRow, w: DEFAULT_W, h: DEFAULT_H };
 }
 
@@ -198,7 +214,14 @@ export default function Grid() {
     }
     const { wantX, wantY } = wantCoordsFromEvent(e);
     const id = makeId();
-    const title = type === "gmail" ? "Inbox" : "HF Feed";
+    const title =
+      type === "gmail"
+        ? "Inbox"
+        : type === "calendar"
+        ? "Upcoming"
+        : type === "github"
+        ? "Feed"
+        : "HF Feed";
     const allKinds = ["model", "dataset", "space", "paper"] as HFKind[];
     // Both module types default to "everything included": HF gets all four
     // kinds ticked in both columns; Gmail relies on excludedAccountLabels
@@ -256,7 +279,7 @@ export default function Grid() {
             onDragStop={onDragStop}
             draggableCancel=".no-drag,input,button"
             compactType={null}
-            preventCollision={false}
+            preventCollision={true}
             margin={[MARGIN, MARGIN]}
             containerPadding={[0, 0]}
             resizeHandles={["se", "sw"]}
@@ -294,6 +317,8 @@ function Toolbar({
       <div className="w-6 h-px bg-[var(--border)] my-1" />
       <DraggableTile type="hf" onDragStart={onDragStart} />
       <DraggableTile type="gmail" onDragStart={onDragStart} />
+      <DraggableTile type="calendar" onDragStart={onDragStart} />
+      <DraggableTile type="github" onDragStart={onDragStart} />
     </div>
   );
 }
@@ -325,7 +350,14 @@ function DraggableTile({
   type: ModuleType;
   onDragStart: (t: ModuleType) => void;
 }) {
-  const label = type === "gmail" ? "Gmail inbox" : "HuggingFace feed";
+  const label =
+    type === "gmail"
+      ? "Gmail inbox"
+      : type === "calendar"
+      ? "Google Calendar"
+      : type === "github"
+      ? "GitHub feed"
+      : "HuggingFace feed";
   return (
     <div
       className="rail-item w-10 h-10 flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
@@ -340,6 +372,12 @@ function DraggableTile({
       {type === "gmail" ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src="/logos/gmail.png" alt="Gmail" width={24} height={20} className="pointer-events-none" draggable={false} />
+      ) : type === "calendar" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src="/logos/calendar.png" alt="Google Calendar" width={24} height={24} className="pointer-events-none" draggable={false} />
+      ) : type === "github" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src="/logos/github.png" alt="GitHub" width={24} height={24} className="pointer-events-none" style={{ filter: "invert(1)" }} draggable={false} />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img src="/logos/hf.png" alt="HuggingFace" width={28} height={28} className="pointer-events-none" draggable={false} />

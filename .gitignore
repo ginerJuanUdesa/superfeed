@@ -44,3 +44,8 @@ next-env.d.ts
 unyapper.log
 .playwright-mcp/
 grid-2-modules.png
+
+# local tooling / agent config (personal)
+.claude/
+.agents/
+skills-lock.json

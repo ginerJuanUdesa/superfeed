@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const STORAGE_KEY = "unyapper:settings:v1";
 const LEGACY_KEY = "unyapper:credentials:v1";
@@ -25,6 +25,8 @@ export interface Settings {
   gmailRefreshToken?: string;
   hfUsername: string;
   hfToken: string;
+  githubUsername: string;
+  githubToken: string;
   anthropicApiKey: string;
   localLlmUrl: string;
   localLlmModel: string;
@@ -36,6 +38,8 @@ const EMPTY: Settings = {
   gmailAccounts: [],
   hfUsername: "",
   hfToken: "",
+  githubUsername: "",
+  githubToken: "",
   anthropicApiKey: "",
   localLlmUrl: "",
   localLlmModel: "",
@@ -203,10 +207,25 @@ export default function SettingsModal({
             <Field label="Access token" value={settings.hfToken} onChange={(v) => set("hfToken", v)} secret />
           </Section>
 
+          <Section title="GitHub" hint="Your username drives the received-events feed. PAT with read:user for private activity.">
+            <Field label="Username" value={settings.githubUsername} onChange={(v) => set("githubUsername", v)} placeholder="e.g. ginerjuan" />
+            <Field label="Personal access token" value={settings.githubToken} onChange={(v) => set("githubToken", v)} secret />
+          </Section>
+
           <Section title="LLM" hint="Pick one: Anthropic key, or a local OpenAI-compatible URL">
             <Field label="Anthropic API key" value={settings.anthropicApiKey} onChange={(v) => set("anthropicApiKey", v)} secret />
             <Field label="Local LLM URL" value={settings.localLlmUrl} onChange={(v) => set("localLlmUrl", v)} placeholder="http://host:port/v1/chat/completions" />
             <Field label="Local LLM model" value={settings.localLlmModel} onChange={(v) => set("localLlmModel", v)} placeholder="model name reported by the server" />
+          </Section>
+
+          <Section title="Backup" hint="Export or import all settings as JSON. Includes secrets — don't share the file.">
+            <BackupField
+              onExport={() => exportSettings(settings)}
+              onImport={(imported) => {
+                setSettings(imported);
+                setDirty(true);
+              }}
+            />
           </Section>
         </div>
 
@@ -423,6 +442,103 @@ function AccountRow({
         >
           {revealRT ? "hide" : "show"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+function exportSettings(s: Settings) {
+  const blob = new Blob([JSON.stringify(s, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  a.href = url;
+  a.download = `superfeed-settings-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/** Merge an untrusted JSON blob into a full Settings shape by starting from
+ *  EMPTY, layering the blob on top, and re-running loadSettings' migrations
+ *  so legacy exports (pre per-account creds, etc.) still land in a valid state. */
+function parseImported(raw: string): Settings {
+  const parsed = JSON.parse(raw) as Partial<Settings>;
+  const base: Settings = { ...EMPTY, ...parsed };
+  const sharedId = base.gmailClientId ?? "";
+  const sharedSecret = base.gmailClientSecret ?? "";
+  if (!base.gmailAccounts?.length && base.gmailRefreshToken) {
+    base.gmailAccounts = [
+      {
+        label: "primary",
+        refreshToken: base.gmailRefreshToken,
+        clientId: sharedId,
+        clientSecret: sharedSecret,
+      },
+    ];
+  }
+  base.gmailAccounts ??= [];
+  base.gmailAccounts = base.gmailAccounts.map((a) => ({
+    label: a.label ?? "",
+    refreshToken: a.refreshToken ?? "",
+    clientId: a.clientId || sharedId || "",
+    clientSecret: a.clientSecret || sharedSecret || "",
+  }));
+  base.themeMode ??= "system";
+  return base;
+}
+
+function BackupField({
+  onExport,
+  onImport,
+}: {
+  onExport: () => void;
+  onImport: (s: Settings) => void;
+}) {
+  const [err, setErr] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const pickFile = () => inputRef.current?.click();
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // let the same file re-trigger later
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const imported = parseImported(text);
+      onImport(imported);
+      setErr(null);
+    } catch (ex) {
+      setErr((ex as Error).message || "Invalid file");
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <button type="button" onClick={onExport} className="btn btn-ghost h-8 text-xs">
+          Export JSON
+        </button>
+        <button type="button" onClick={pickFile} className="btn btn-ghost h-8 text-xs">
+          Import JSON
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={handleFile}
+          className="hidden"
+        />
+      </div>
+      {err && (
+        <div className="text-xs" style={{ color: "var(--danger)" }}>
+          {err}
+        </div>
+      )}
+      <div className="text-[11px] text-[var(--text-faint)]">
+        Importing overwrites the form. Nothing is persisted until you press Save.
       </div>
     </div>
   );

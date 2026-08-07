@@ -17,21 +17,52 @@ interface Props {
   onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
 }
 
+/* Gmail's own light-theme palette, quoted verbatim so the module reads as an
+ * embedded slice of mail.google.com. Kept theme-independent for the same
+ * reason as HFModule — the visual quote IS the point. */
+const G = {
+  bg: "#ffffff",
+  headerBg: "#f6f8fc",
+  border: "#e5e7eb",
+  rowHover: "#f2f4f8",
+  rowUnread: "#ffffff",
+  text: "#202124",
+  textMuted: "#5f6368",
+  textFaint: "#80868b",
+  alertBg: "#fdecea",
+  alertText: "#a50e0e",
+  spamText: "#9aa0a6",
+  accent: "#1a73e8",
+};
+
+/** Row-status dot palette. Alerts trump unread, unread trumps read. */
+const DOT = {
+  alert: "#d93025",   // Gmail red
+  unread: "#188038",  // Gmail green
+  read: "#9aa0a6",    // Gmail grey
+};
+
 function relativeTime(iso: string): string {
   const then = Date.parse(iso);
   if (!then) return "";
-  const diff = Date.now() - then;
-  const mins = Math.round(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.round(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  const years = Math.round(months / 12);
-  return `${years}y ago`;
+  const now = new Date();
+  const d = new Date(then);
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) {
+    return d.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+  const sameYear = d.getFullYear() === now.getFullYear();
+  if (sameYear) {
+    return d.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
+  }
+  return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "2-digit" });
 }
 
 const BATCH_SIZE = 6;
@@ -39,15 +70,10 @@ const BATCH_SIZE = 6;
 export default function GmailModule({ module, onRemove, onUpdateConfig }: Props) {
   const configuredAccounts = useMemo(() => {
     const s = loadSettings();
-    return s.gmailAccounts
-      .map((a) => a.label.trim())
-      .filter(Boolean);
+    return s.gmailAccounts.map((a) => a.label.trim()).filter(Boolean);
   }, []);
 
   const selectedAccounts = useMemo(() => {
-    // Opt-out semantics: default (nothing stored) = every configured account
-    // is included. Migrate a legacy opt-in `accountLabels` list into its
-    // equivalent excluded set so existing modules keep the same visible state.
     const excludedRaw = module.config.excludedAccountLabels as string[] | undefined;
     const legacyIncluded = module.config.accountLabels as string[] | undefined;
     const excluded = new Set(
@@ -68,8 +94,6 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
   const [classifications, setClassifications] = useState<Record<string, GmailClassification>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  // Bumped by the "Regenerate" action to force the classify effect to re-fire
-  // without waiting on `items` to change identity.
   const [regenTick, setRegenTick] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -91,9 +115,7 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
     }
     const missing = accounts.filter((a) => !a.clientId || !a.clientSecret);
     if (missing.length) {
-      setError(
-        `Missing OAuth client for: ${missing.map((m) => m.label).join(", ")}`
-      );
+      setError(`Missing OAuth client for: ${missing.map((m) => m.label).join(", ")}`);
       setItems([]);
       return;
     }
@@ -138,7 +160,6 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
     return () => abortRef.current?.abort();
   }, [load]);
 
-  // Batched classify: pull cached, send the rest in small clusters.
   useEffect(() => {
     if (!items || items.length === 0) return;
     const settings = loadSettings();
@@ -198,7 +219,6 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
     }
 
     async function runAll() {
-      // Chunk into batches, run 2 batches concurrently.
       const batches: GmailItem[][] = [];
       for (let i = 0; i < pending.length; i += BATCH_SIZE) {
         batches.push(pending.slice(i, i + BATCH_SIZE));
@@ -223,45 +243,64 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
   const empty = visibleItems && visibleItems.length === 0;
 
   return (
-    <div className="panel group h-full w-full cursor-move flex flex-col">
-      <div className="panel-header shrink-0">
-        <span className="panel-header-tag">Gmail</span>
-        <span className="panel-header-meta mono">
+    <div
+      className="panel group h-full w-full cursor-move flex flex-col"
+      style={{ background: G.bg, border: `1px solid ${G.border}` }}
+    >
+      <div
+        className="panel-header shrink-0"
+        style={{
+          background: G.headerBg,
+          borderBottom: `1px solid ${G.border}`,
+          color: G.textMuted,
+        }}
+      >
+        <span className="panel-header-tag" style={{ color: G.text }}>
+          Gmail
+        </span>
+        <span className="panel-header-meta mono" style={{ color: G.textFaint }}>
           {visibleItems ? String(visibleItems.length).padStart(2, "0") : "00"} messages
         </span>
         {loading && (
-          <span className="panel-header-meta mono ml-auto text-[var(--accent)]">
+          <span
+            className="panel-header-meta mono ml-auto"
+            style={{ color: G.accent }}
+          >
             loading
           </span>
         )}
       </div>
 
-      <div className="relative flex-1 min-h-0 overflow-y-auto">
+      <div className="relative flex-1 min-h-0 overflow-y-auto" style={{ background: G.bg }}>
         {error && (
           <div
             className="m-3 px-3 py-2 text-xs rounded-md"
             style={{
-              color: "var(--danger)",
-              background: "rgba(216, 91, 91, 0.08)",
-              border: "1px solid rgba(216, 91, 91, 0.25)",
+              color: G.alertText,
+              background: G.alertBg,
+              border: `1px solid ${G.alertText}22`,
             }}
           >
             {error}
           </div>
         )}
         {visibleItems && visibleItems.length > 0 && (
-          <ul className="p-2 space-y-2">
-            {visibleItems.map((item) => (
-              <MailCard
+          <ul>
+            {visibleItems.map((item, i) => (
+              <MailRow
                 key={item.id}
                 item={item}
                 classification={classifications[item.id]}
+                isLast={i === visibleItems.length - 1}
               />
             ))}
           </ul>
         )}
         {empty && !error && (
-          <div className="absolute bottom-3 inset-x-3 text-center text-xs text-[var(--text-faint)]">
+          <div
+            className="absolute bottom-3 inset-x-3 text-center text-xs"
+            style={{ color: G.textFaint }}
+          >
             {configuredAccounts.length === 0
               ? "No Gmail accounts configured. Open Settings."
               : selectedAccounts.length === 0
@@ -289,7 +328,8 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
             onRemove(module.id);
           }}
           onMouseDown={(e) => e.stopPropagation()}
-          className="no-drag w-7 h-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--surface-max)] transition-colors text-lg leading-none"
+          className="no-drag w-7 h-7 flex items-center justify-center rounded-md transition-colors text-lg leading-none"
+          style={{ color: G.textMuted }}
           title="Remove module"
         >
           ×
@@ -299,47 +339,43 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
   );
 }
 
-function MailCard({
+function MailRow({
   item,
   classification,
+  isLast,
 }: {
   item: GmailItem;
   classification?: GmailClassification;
+  isLast: boolean;
 }) {
   const isSpam = classification?.isSpam ?? false;
   const isAlert = classification?.isAlert ?? false;
-  const summary = classification?.summary;
 
-  // Precedence: alert (red) > spam (grey) > normal (multicolor Gmail gradient).
-  // Alerts win because a security-alert-shaped spam still deserves the eye's attention.
-  const kind: "alert" | "spam" | "normal" = isAlert ? "alert" : isSpam ? "spam" : "normal";
+  const rowBg = isAlert ? G.alertBg : G.rowUnread;
+  const senderColor = isSpam ? G.spamText : isAlert ? G.alertText : G.text;
+  const subjectColor = isSpam ? G.spamText : isAlert ? G.alertText : G.text;
+  const snippetColor = isSpam ? G.spamText : G.textMuted;
+  const timeColor = isSpam ? G.spamText : isAlert ? G.alertText : G.textMuted;
 
-  const flapBg =
-    kind === "alert"
-      ? "linear-gradient(90deg, #b91c1c 0%, #dc2626 55%, #ef4444 100%)"
-      : kind === "spam"
-      ? "linear-gradient(90deg, #4b5563, #6b7280)"
-      : "linear-gradient(90deg, #ea4335 0%, #fbbc04 45%, #34a853 70%, #4285f4 100%)";
-  const flapText = kind === "spam" ? "#f3f4f6" : "#ffffff";
-  // chip sits on the flap; keep it on a light surface so the flap colors read
-  const chipStyle: React.CSSProperties =
-    kind === "alert"
-      ? { backgroundColor: "#ffffff", color: "#b91c1c" }
-      : kind === "spam"
-      ? { backgroundColor: "#e5e7eb", color: "#374151" }
-      : { backgroundColor: "#ffffff", color: "#111827" };
-  const label = kind === "alert" ? "alert" : kind === "spam" ? "spam" : "mail";
-  // Summary color inside the dark body — one accent per state, still legible.
-  const summaryColor =
-    kind === "alert"
-      ? "#f28b8b"
-      : kind === "spam"
-      ? "var(--text-faint)"
-      : "var(--text-muted)";
+  const dotColor = isAlert
+    ? DOT.alert
+    : item.isUnread
+    ? DOT.unread
+    : DOT.read;
+  const dotTitle = isAlert
+    ? `alert · ${item.account}`
+    : item.isUnread
+    ? `unread · ${item.account}`
+    : `read · ${item.account}`;
 
+  // `/mail/u/{email}/` 404s when Chrome isn't already signed into that account.
+  // `?authuser={email}` makes Google resolve the right session (or prompt to switch).
   const href = item.accountEmail
-    ? `https://mail.google.com/mail/u/${encodeURIComponent(item.accountEmail)}/#all/${item.id}`
+    ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(item.accountEmail)}#all/${item.id}`
     : `https://mail.google.com/mail/u/0/#all/${item.id}`;
+
+  const summary = classification?.summary;
+  const snippetText = summary ?? item.snippet ?? "";
 
   return (
     <li>
@@ -347,59 +383,50 @@ function MailCard({
         href={href}
         target="_blank"
         rel="noreferrer noopener"
-        className="envelope group/env block relative transition-transform hover:-translate-y-[1px]"
+        className="block px-3 py-1.5 min-w-0 transition-colors gmail-row"
         draggable={false}
+        style={{
+          background: rowBg,
+          borderBottom: isLast ? "none" : `1px solid ${G.border}`,
+          color: G.text,
+        }}
       >
-        {/* rectangular top of the envelope flap — colored bar with metadata */}
-        <div
-          className="flex items-baseline gap-2 px-3.5 py-1.5 min-w-0"
-          style={{ background: flapBg, color: flapText }}
-        >
-          <span className="text-[11px] font-semibold truncate">{item.account}</span>
+        {/* line 1: dot + sender + subject + time */}
+        <div className="flex items-center gap-2 min-w-0">
           <span
-            className="text-[9px] uppercase tracking-[0.14em] font-semibold shrink-0 rounded-sm px-1.5 py-[1px] leading-[1.4]"
-            style={chipStyle}
+            className="w-1.5 h-1.5 rounded-full shrink-0"
+            style={{ background: dotColor }}
+            title={dotTitle}
+          />
+          <span
+            className="text-[13px] font-semibold shrink-0 truncate"
+            style={{ color: senderColor, width: "24%", minWidth: 90, maxWidth: 200 }}
           >
-            {label}
+            {item.from || item.fromEmail}
           </span>
-          <span className="text-[10px] font-medium truncate ml-auto opacity-90">
-            {item.from}
+          <span
+            className="text-[13px] truncate flex-1 min-w-0 font-medium"
+            style={{ color: subjectColor }}
+          >
+            {item.subject}
+          </span>
+          <span
+            className="text-[12px] shrink-0 mono"
+            style={{ color: timeColor }}
+          >
+            {relativeTime(item.receivedAt)}
           </span>
         </div>
-        {/* triangular tip of the flap — dips down into the envelope body */}
-        <div
-          className="w-full h-4"
-          style={{
-            background: flapBg,
-            clipPath: "polygon(0 0, 100% 0, 50% 100%)",
-          }}
-        />
-        <div className="px-3.5 pt-2 pb-2.5">
-          <div className="flex items-baseline gap-2 min-w-0">
-            <span className="text-sm font-medium text-[var(--text)] leading-tight truncate">
-              {item.subject}
-            </span>
-            <span className="text-[10px] text-[var(--text-faint)] shrink-0 mono">
-              {relativeTime(item.receivedAt)}
-            </span>
+        {/* line 2: summary/snippet, indented under the sender column so the
+             dot stays as the row's left anchor */}
+        {snippetText && (
+          <div
+            className="text-[12px] leading-snug line-clamp-2 mt-0.5 pl-[14px]"
+            style={{ color: snippetColor }}
+          >
+            {snippetText}
           </div>
-          {summary ? (
-            <div
-              className={`mt-1.5 text-xs leading-snug ${kind === "alert" ? "font-medium" : ""}`}
-              style={{ color: summaryColor }}
-            >
-              {summary}
-            </div>
-          ) : item.snippet ? (
-            <div className="mt-1.5 text-xs text-[var(--text-faint)] line-clamp-2 leading-snug italic">
-              {item.snippet}
-            </div>
-          ) : (
-            <div className="mt-1.5 text-[10px] text-[var(--text-faint)] italic">
-              summarizing…
-            </div>
-          )}
-        </div>
+        )}
       </a>
     </li>
   );
@@ -443,7 +470,8 @@ function BurgerMenu({
           setOpen((o) => !o);
         }}
         onMouseDown={(e) => e.stopPropagation()}
-        className="w-7 h-7 rounded-md text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-max)] flex flex-col items-center justify-center gap-[3px] transition-colors"
+        className="w-7 h-7 rounded-md flex flex-col items-center justify-center gap-[3px] transition-colors"
+        style={{ color: G.textMuted }}
         title="Configure module"
       >
         <span className="w-3.5 h-[1.5px] bg-current rounded" />
@@ -456,17 +484,21 @@ function BurgerMenu({
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           style={{
-            background: "var(--surface-hi)",
-            border: "1px solid var(--border)",
+            background: G.bg,
+            border: `1px solid ${G.border}`,
             borderRadius: "var(--radius)",
-            boxShadow: "0 24px 48px -20px rgba(0,0,0,0.85)",
+            boxShadow: "0 24px 48px -20px rgba(0,0,0,0.25)",
+            color: G.text,
           }}
         >
-          <div className="px-3 pt-1.5 pb-1 text-[11px] text-[var(--text-faint)] font-medium">
+          <div
+            className="px-3 pt-1.5 pb-1 text-[11px] font-medium"
+            style={{ color: G.textFaint }}
+          >
             Accounts
           </div>
           {configured.length === 0 ? (
-            <div className="px-3 py-1 text-xs text-[var(--text-faint)] italic">
+            <div className="px-3 py-1 text-xs italic" style={{ color: G.textFaint }}>
               None configured
             </div>
           ) : (
@@ -475,27 +507,28 @@ function BurgerMenu({
               return (
                 <label
                   key={label}
-                  className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-[var(--text)] hover:bg-[var(--surface-max)] cursor-pointer"
+                  className="flex items-center gap-2.5 px-3 py-1.5 text-xs cursor-pointer hover:bg-[#f2f4f8]"
+                  style={{ color: G.text }}
                 >
                   <input
                     type="checkbox"
                     checked={checked}
                     onChange={() => toggle(label)}
-                    className="accent-[var(--accent)]"
                   />
                   <span className="truncate">{label}</span>
                 </label>
               );
             })
           )}
-          <div className="my-1 h-px bg-[var(--border)]" />
+          <div className="my-1 h-px" style={{ background: G.border }} />
           <button
             type="button"
             onClick={() => {
               onRegenerate();
               setOpen(false);
             }}
-            className="w-full text-left px-3 py-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-max)]"
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-[#f2f4f8]"
+            style={{ color: G.textMuted }}
           >
             Regenerate all
           </button>

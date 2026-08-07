@@ -1,16 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Article,
+  Cube,
+  Database,
+  Rocket,
+} from "@phosphor-icons/react";
 import { HF_KINDS, HFKind, ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
-import {
-  getAuthorColor,
-  getSummary,
-  keyFor,
-  setAuthorColor,
-  setSummary,
-} from "@/lib/summaryCache";
-import { dominantColorFromImage } from "@/lib/avatarColor";
+import { getSummary, keyFor, setSummary } from "@/lib/summaryCache";
 import type { HFItem } from "@/lib/hf";
 
 interface Props {
@@ -19,30 +18,36 @@ interface Props {
   onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
 }
 
-const KIND_LABEL: Record<HFKind, string> = {
-  model: "MODEL",
-  dataset: "DATASET",
-  space: "SPACE",
-  paper: "PAPER",
+/* HuggingFace's own palette — quoted verbatim so the module reads like an
+ * embedded piece of huggingface.co instead of a bespoke card. These are held
+ * constant across the app's light/dark themes on purpose: HF is dark on its
+ * own site and the visual reference is the whole point of this restyle. */
+const HF = {
+  bg: "#0b0f19",
+  headerBg: "#0f1420",
+  border: "#1c2331",
+  cardBg: "#141926",
+  cardBorder: "#232a3b",
+  iconBg: "#1e2534",
+  text: "#e4e7ee",
+  textMuted: "#9aa4b8",
+  textFaint: "#6b7385",
+  accent: "#ffb000", // HF's yellow — used sparingly for the kind chip
 };
 
-const FALLBACK_COLOR = "#6b7280";
+const KIND_LABEL: Record<HFKind, string> = {
+  model: "model",
+  dataset: "dataset",
+  space: "space",
+  paper: "paper",
+};
 
-function hexToRgb(hex: string): [number, number, number] {
-  const m = hex.replace("#", "").match(/^([0-9a-f]{6})$/i);
-  if (!m) return [107, 114, 128];
-  return [
-    parseInt(m[1].slice(0, 2), 16),
-    parseInt(m[1].slice(2, 4), 16),
-    parseInt(m[1].slice(4, 6), 16),
-  ];
-}
-
-function readableOn(hex: string): string {
-  const [r, g, b] = hexToRgb(hex);
-  // relative luminance
-  const l = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return l > 0.62 ? "#111827" : "#ffffff";
+function KindIcon({ kind, size = 16 }: { kind: HFKind; size?: number }) {
+  const color = HF.textMuted;
+  if (kind === "dataset") return <Database size={size} color={color} weight="regular" />;
+  if (kind === "space") return <Rocket size={size} color={color} weight="regular" />;
+  if (kind === "paper") return <Article size={size} color={color} weight="regular" />;
+  return <Cube size={size} color={color} weight="regular" />;
 }
 
 function relativeTime(iso: string): string {
@@ -63,9 +68,6 @@ function relativeTime(iso: string): string {
 }
 
 export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
-  // Legacy configs stored a single `kinds` list; seed both event columns from it.
-  // Memoize on the serialized value so a fresh `[]` fallback each render
-  // doesn't cascade into new array identities → useCallback/useEffect loop.
   const { releaseKinds, updateKinds, anyKinds } = useMemo(() => {
     const legacy = (module.config.kinds as HFKind[] | undefined) ?? [];
     const rk = (module.config.releaseKinds as HFKind[] | undefined) ?? legacy;
@@ -83,7 +85,6 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
   ]);
   const [items, setItems] = useState<HFItem[] | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
-  const [authorColors, setAuthorColors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -138,40 +139,10 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
     return () => abortRef.current?.abort();
   }, [load]);
 
-  // Card color = dominant color of the account's profile picture, per author.
-  useEffect(() => {
-    if (!items || items.length === 0) return;
-
-    const cached: Record<string, string> = {};
-    const todo = new Map<string, string>(); // author -> avatarUrl
-    for (const it of items) {
-      const hit = getAuthorColor(it.author);
-      if (hit) cached[it.author] = hit;
-      else if (it.avatarUrl) todo.set(it.author, it.avatarUrl);
-    }
-    if (Object.keys(cached).length) setAuthorColors((prev) => ({ ...prev, ...cached }));
-    if (!todo.size) return;
-
-    let cancelled = false;
-    void Promise.all(
-      [...todo].map(async ([author, url]) => {
-        const color = await dominantColorFromImage(url);
-        if (!color || cancelled) return;
-        setAuthorColor(author, color);
-        setAuthorColors((prev) => ({ ...prev, [author]: color }));
-      })
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [items]);
-
-  // Fetch missing summaries from LLM.
   useEffect(() => {
     if (!items || items.length === 0) return;
     const settings = loadSettings();
 
-    // Hydrate cached data
     const initSummaries: Record<string, string> = {};
     const pending: HFItem[] = [];
     for (const it of items) {
@@ -232,14 +203,35 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
   const empty = visibleItems && visibleItems.length === 0;
 
   return (
-    <div className="panel group h-full w-full cursor-move flex flex-col">
-      <div className="panel-header shrink-0">
-        <span className="panel-header-tag">HuggingFace</span>
-        <span className="panel-header-meta mono">
+    <div
+      className="panel group h-full w-full cursor-move flex flex-col"
+      style={{ background: HF.bg, border: `1px solid ${HF.border}` }}
+    >
+      <div
+        className="panel-header shrink-0"
+        style={{
+          background: HF.headerBg,
+          borderBottom: `1px solid ${HF.border}`,
+          color: HF.textMuted,
+        }}
+      >
+        <span
+          className="panel-header-tag"
+          style={{ color: HF.text }}
+        >
+          Hugging Face
+        </span>
+        <span
+          className="panel-header-meta mono"
+          style={{ color: HF.textFaint }}
+        >
           {visibleItems ? String(visibleItems.length).padStart(2, "0") : "00"} items
         </span>
         {loading && (
-          <span className="panel-header-meta mono ml-auto text-[var(--accent)]">
+          <span
+            className="panel-header-meta mono ml-auto"
+            style={{ color: HF.accent }}
+          >
             loading
           </span>
         )}
@@ -259,83 +251,117 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
           </div>
         )}
         {visibleItems && visibleItems.length > 0 && (
-          <ul className="p-2 space-y-2">
+          <ul className="px-3 py-3 space-y-4">
             {visibleItems.map((item) => {
               const k = keyFor(item.kind, item.id, item.isUpdate);
               const summary = summaries[k];
-              const barColor = authorColors[item.author] ?? FALLBACK_COLOR;
-              const barText = readableOn(barColor);
+              const fallback = item.isUpdate
+                ? item.lastCommit ?? item.description
+                : item.description ?? item.lastCommit;
+              const subline = summary ?? fallback;
+              const verb = item.isUpdate ? "updated" : "released";
               return (
                 <li key={k}>
                   <a
                     href={item.url}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="feed-card block"
+                    className="block"
                     draggable={false}
                   >
+                    {/* HF's feed row header: avatar + author verb kind · time */}
                     <div
-                      className="flex items-center gap-2 px-3 py-1.5 min-w-0"
-                      style={{ backgroundColor: barColor, color: barText }}
+                      className="flex items-center gap-1.5 mb-1.5 text-[11px] min-w-0"
+                      style={{ color: HF.textMuted }}
                     >
-                      {item.avatarUrl && (
+                      {item.avatarUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={item.avatarUrl}
                           alt=""
-                          className="shrink-0 w-5 h-5 rounded-full object-cover"
-                          style={{
-                            boxShadow: `0 0 0 1px ${barText}`,
-                            background: barText,
-                          }}
+                          className="w-4 h-4 rounded-full object-cover shrink-0"
                           draggable={false}
                         />
-                      )}
-                      <span className="text-[11px] font-semibold truncate">{item.author}</span>
-                      <span
-                        className="text-[9px] uppercase tracking-[0.14em] font-semibold shrink-0 rounded px-1.5 py-[1px] leading-[1.4]"
-                        style={{ background: barText, color: barColor }}
-                      >
-                        {KIND_LABEL[item.kind]}
-                      </span>
-                      {item.isUpdate && (
-                        <span
-                          className="text-[9px] uppercase tracking-[0.14em] font-semibold shrink-0 rounded px-1.5 py-[1px] leading-[1.4]"
-                          style={{ background: barText, color: barColor }}
-                        >
-                          updated
-                        </span>
-                      )}
-                    </div>
-                    <div className="px-3.5 pt-1.5 pb-2.5">
-                      <div className="flex items-baseline gap-2 min-w-0">
-                        <span className="text-sm font-medium text-[var(--text)] leading-tight truncate">
-                          {item.name}
-                        </span>
-                        <span className="text-[10px] text-[var(--text-faint)] shrink-0 mono">
-                          {relativeTime(item.lastModified)}
-                        </span>
-                      </div>
-                      {summary ? (
-                        <div className="mt-1.5 text-xs text-[var(--text-muted)] leading-snug">
-                          {summary}
-                        </div>
-                      ) : item.lastCommit ? (
-                        <div className="mt-1.5 text-xs text-[var(--text-faint)] line-clamp-2 leading-snug italic">
-                          {item.lastCommit}
-                          {item.lastCommitBy && (
-                            <span> · {item.lastCommitBy}</span>
-                          )}
-                        </div>
-                      ) : item.description ? (
-                        <div className="mt-1.5 text-xs text-[var(--text-faint)] line-clamp-2 leading-snug italic">
-                          {item.description}
-                        </div>
                       ) : (
-                        <div className="mt-1.5 text-[10px] text-[var(--text-faint)] italic">
-                          summarizing…
+                        <span
+                          className="w-4 h-4 rounded-full shrink-0"
+                          style={{ background: HF.iconBg }}
+                        />
+                      )}
+                      <span
+                        className="font-semibold truncate"
+                        style={{ color: HF.text }}
+                      >
+                        {item.author}
+                      </span>
+                      <span className="truncate">
+                        {KIND_LABEL[item.kind]} {verb}
+                        {item.isUpdate && item.lastCommitBy && (
+                          <>
+                            {" "}
+                            by{" "}
+                            <span style={{ color: HF.text }}>
+                              {item.lastCommitBy}
+                            </span>
+                          </>
+                        )}
+                      </span>
+                      <span
+                        className="ml-auto shrink-0"
+                        style={{ color: HF.textFaint }}
+                      >
+                        {relativeTime(item.lastModified)}
+                      </span>
+                    </div>
+
+                    {/* HF's repo card: icon tile + title + subline */}
+                    <div
+                      className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg transition-colors group-hover/hf:border-[#2f374a]"
+                      style={{
+                        background: HF.cardBg,
+                        border: `1px solid ${HF.cardBorder}`,
+                      }}
+                    >
+                      {item.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={item.avatarUrl}
+                          alt=""
+                          className="w-8 h-8 rounded-md object-cover shrink-0"
+                          style={{ background: HF.iconBg }}
+                          draggable={false}
+                        />
+                      ) : (
+                        <div
+                          className="w-8 h-8 rounded-md flex items-center justify-center shrink-0"
+                          style={{ background: HF.iconBg }}
+                        >
+                          <KindIcon kind={item.kind} />
                         </div>
                       )}
+                      <div className="min-w-0 flex-1">
+                        <div
+                          className="text-sm font-semibold truncate"
+                          style={{ color: HF.text }}
+                        >
+                          {item.author}/{item.name}
+                        </div>
+                        {subline ? (
+                          <div
+                            className="text-[11px] mt-0.5 leading-snug line-clamp-2"
+                            style={{ color: HF.textMuted }}
+                          >
+                            {subline}
+                          </div>
+                        ) : (
+                          <div
+                            className="text-[11px] mt-0.5 italic"
+                            style={{ color: HF.textFaint }}
+                          >
+                            summarizing…
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </a>
                 </li>
@@ -344,7 +370,10 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
           </ul>
         )}
         {empty && !error && (
-          <div className="absolute bottom-3 inset-x-3 text-center text-xs text-[var(--text-faint)]">
+          <div
+            className="absolute bottom-3 inset-x-3 text-center text-xs"
+            style={{ color: HF.textFaint }}
+          >
             {anyKinds.length === 0
               ? "No kinds selected. Open the menu to pick some."
               : "No matching items yet."}
@@ -369,7 +398,8 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
             onRemove(module.id);
           }}
           onMouseDown={(e) => e.stopPropagation()}
-          className="no-drag w-7 h-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--surface-max)] transition-colors text-lg leading-none"
+          className="no-drag w-7 h-7 flex items-center justify-center rounded-md transition-colors text-lg leading-none"
+          style={{ color: HF.textMuted }}
           title="Remove module"
         >
           ×
@@ -410,7 +440,8 @@ function BurgerMenu({
           setOpen((o) => !o);
         }}
         onMouseDown={(e) => e.stopPropagation()}
-        className="w-7 h-7 rounded-md text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-max)] flex flex-col items-center justify-center gap-[3px] transition-colors"
+        className="w-7 h-7 rounded-md flex flex-col items-center justify-center gap-[3px] transition-colors"
+        style={{ color: HF.textMuted }}
         title="Configure module"
       >
         <span className="w-3.5 h-[1.5px] bg-current rounded" />
@@ -423,14 +454,15 @@ function BurgerMenu({
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           style={{
-            background: "var(--surface-hi)",
-            border: "1px solid var(--border)",
+            background: HF.headerBg,
+            border: `1px solid ${HF.border}`,
             borderRadius: "var(--radius)",
             boxShadow: "0 24px 48px -20px rgba(0,0,0,0.85)",
+            color: HF.text,
           }}
         >
           <KindSection title="Releases" selected={releaseKinds} onChange={onChangeReleases} />
-          <div className="my-1 h-px bg-[var(--border)]" />
+          <div className="my-1 h-px" style={{ background: HF.border }} />
           <KindSection title="Updates" selected={updateKinds} onChange={onChangeUpdates} />
         </div>
       )}
@@ -455,7 +487,10 @@ function KindSection({
   };
   return (
     <>
-      <div className="px-3 pt-1.5 pb-1 text-[11px] text-[var(--text-faint)] font-medium">
+      <div
+        className="px-3 pt-1.5 pb-1 text-[11px] font-medium"
+        style={{ color: HF.textFaint }}
+      >
         {title}
       </div>
       {HF_KINDS.map(({ key, label }) => {
@@ -463,7 +498,8 @@ function KindSection({
         return (
           <label
             key={key}
-            className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-[var(--text)] hover:bg-[var(--surface-max)] cursor-pointer"
+            className="flex items-center gap-2.5 px-3 py-1.5 text-xs cursor-pointer"
+            style={{ color: HF.text }}
           >
             <input
               type="checkbox"

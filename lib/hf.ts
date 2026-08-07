@@ -68,24 +68,63 @@ async function fetchAllPages(
   return out;
 }
 
+/** Orgs the user is a member of — surfaced through the profile overview. */
+async function fetchMemberOrgs(
+  user: string,
+  token: string | undefined
+): Promise<{ name?: string; avatarUrl?: string }[]> {
+  const url = `${HF_BASE}/api/users/${encodeURIComponent(user)}/overview`;
+  try {
+    const res = await fetch(url, {
+      headers: headers(token),
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      orgs?: { name?: string; avatarUrl?: string }[];
+    };
+    return data.orgs ?? [];
+  } catch {
+    return [];
+  }
+}
+
 /**
- * Accounts the user follows. HF splits this into two endpoints:
- * `/following` returns only users, `/following/orgs` only organizations.
- * Most real releases live under org namespaces, so both are required.
+ * Accounts whose activity should surface in the feed. Sources:
+ * - `/following` (users you follow)
+ * - `/following/orgs` (orgs you follow)
+ * - `/overview` orgs of the main user (orgs you're a MEMBER of — includes
+ *   private ones with a token)
+ * - `/overview` orgs of each followed USER (so a commit by someone you follow
+ *   into an org repo — e.g. mlabonne pushing to LiquidAI/... — still surfaces,
+ *   which is how HF's own activity feed works)
  */
 export async function fetchFollowing(user: string, token?: string): Promise<HFAccount[]> {
   const base = `${HF_BASE}/api/users/${encodeURIComponent(user)}`;
-  const [users, orgs] = await Promise.all([
+  const [users, followedOrgs, memberOrgs] = await Promise.all([
     fetchAllPages(`${base}/following`, token),
     fetchAllPages(`${base}/following/orgs`, token),
+    fetchMemberOrgs(user, token),
   ]);
-  const accounts = [...users, ...orgs]
-    .map((r) => ({
-      name: r.user ?? r.name ?? "",
+  const followedUserNames = users.map((r) => r.user ?? r.name ?? "").filter(Boolean);
+  const followedUserOrgs = (
+    await pool(
+      followedUserNames.map((name) => () => fetchMemberOrgs(name, token)),
+      12
+    )
+  ).flat();
+  const merged = new Map<string, HFAccount>();
+  for (const r of [...users, ...followedOrgs, ...memberOrgs, ...followedUserOrgs]) {
+    const name = r.user ?? r.name ?? "";
+    if (!name || merged.has(name)) continue;
+    merged.set(name, {
+      name,
       // default identicons come back as a site-relative path
       avatarUrl: r.avatarUrl?.startsWith("/") ? `${HF_BASE}${r.avatarUrl}` : r.avatarUrl,
-    }))
-    .filter((a) => a.name);
+    });
+  }
+  const accounts = [...merged.values()];
   if (!accounts.length) throw new Error(`HF: no follows found for "${user}"`);
   return accounts;
 }
@@ -224,10 +263,10 @@ export async function fetchFeed(opts: {
   token?: string;
   maxItems?: number;
 }): Promise<HFItem[]> {
-  const { user, kinds, since, perAuthorLimit = 4, token, maxItems = 80 } = opts;
+  const { user, kinds, since, perAuthorLimit = 10, token, maxItems = 80 } = opts;
 
-  // v2: `isUpdate` semantics changed — bump so stale entries don't leak old classifications.
-  const cacheKey = `v2|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
+  // v6: release/update classified by createdAt vs since + 3d initial-release window.
+  const cacheKey = `v6|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
   const hit = feedCache.get(cacheKey);
   if (hit && Date.now() - hit.at < FEED_TTL_MS) return hit.items;
 
@@ -257,16 +296,26 @@ export async function fetchFeed(opts: {
     ? flat.filter((it) => Date.parse(it.lastModified) >= sinceMs)
     : flat;
 
-  // Classify NEW vs UPDATE from the user's perspective:
-  // a "new release" is a repo that was CREATED after their start date.
-  // Everything else is an update (a repo that already existed, then got a commit).
+  // Classify NEW vs UPDATE — approximate what HF's activity feed shows as
+  // separate "released" / "updated by X" events. A repo is an UPDATE if EITHER:
+  //  - it existed before the user's `since` (pre-existing repo just got a
+  //    commit — not new to them), OR
+  //  - the last commit landed well after the repo was created (the initial
+  //    release window is over, so this touch is a follow-up commit)
+  // The 3-day window covers most real initial-release bursts without
+  // misclassifying weeks-later maintenance commits like mlabonne's push to
+  // LiquidAI/LFM2.5-2.6B ten days after that repo went live.
+  const INITIAL_RELEASE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
   for (const it of filtered) {
     if (!it.createdAt) {
       it.isUpdate = true;
       continue;
     }
     const created = Date.parse(it.createdAt);
-    it.isUpdate = sinceMs ? created < sinceMs : false;
+    const modified = Date.parse(it.lastModified);
+    const preexisting = sinceMs ? created < sinceMs : false;
+    const laterCommit = modified - created > INITIAL_RELEASE_WINDOW_MS;
+    it.isUpdate = preexisting || laterCommit;
   }
 
   filtered.sort((a, b) => Date.parse(b.lastModified) - Date.parse(a.lastModified));

@@ -3,7 +3,7 @@
 @import "react-resizable/css/styles.css";
 
 /*
- * unyapper visual system: dark surface, single electric-blue accent, one
+ * superfeed visual system: dark surface, single electric-blue accent, one
  * corner-radius scale (12px), tinted shadows. No gradients, no glass, no
  * decorative status dots, no infinite loops. Motion is CSS-only.
  */
@@ -205,6 +205,20 @@ body {
   border-color: var(--border-hi);
   box-shadow: 0 12px 26px -10px rgba(0, 0, 0, 0.7);
 }
+
+/* Gmail row hover — Gmail's own light-grey highlight, applied over the
+   inline row background so alert-tinted rows don't lose their tint. */
+.gmail-row { position: relative; }
+.gmail-row::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.04);
+  opacity: 0;
+  transition: opacity 100ms ease;
+  pointer-events: none;
+}
+.gmail-row:hover::before { opacity: 1; }
 
 /* Right rail: fixed solid strip, always visible. No slide-in. */
 .rail {

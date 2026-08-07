@@ -1,4 +1,4 @@
-export type ModuleType = "gmail" | "hf";
+export type ModuleType = "gmail" | "hf" | "calendar" | "github";
 
 export type HFKind = "model" | "dataset" | "space" | "paper";
 
