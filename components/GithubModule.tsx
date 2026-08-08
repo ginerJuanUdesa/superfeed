@@ -22,6 +22,8 @@ interface Props {
   onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
 }
 
+const REFRESH_MS = 5 * 60 * 1000;
+
 /* GitHub's own dark-dimmed palette, quoted verbatim like HF's — this module
  * reads as an embedded slice of github.com's dashboard feed. */
 const GH = {
@@ -157,7 +159,11 @@ export default function GithubModule({ module, onRemove }: Props) {
 
   useEffect(() => {
     void load();
-    return () => abortRef.current?.abort();
+    const id = window.setInterval(() => void load(), REFRESH_MS);
+    return () => {
+      window.clearInterval(id);
+      abortRef.current?.abort();
+    };
   }, [load]);
 
   const empty = items && items.length === 0;

@@ -17,6 +17,8 @@ interface Props {
   onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
 }
 
+const REFRESH_MS = 5 * 60 * 1000;
+
 /* Gmail's own light-theme palette, quoted verbatim so the module reads as an
  * embedded slice of mail.google.com. Kept theme-independent for the same
  * reason as HFModule — the visual quote IS the point. */
@@ -157,7 +159,11 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
 
   useEffect(() => {
     void load();
-    return () => abortRef.current?.abort();
+    const id = window.setInterval(() => void load(), REFRESH_MS);
+    return () => {
+      window.clearInterval(id);
+      abortRef.current?.abort();
+    };
   }, [load]);
 
   useEffect(() => {

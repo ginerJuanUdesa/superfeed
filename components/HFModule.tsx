@@ -12,6 +12,9 @@ import { loadSettings } from "./SettingsModal";
 import { getSummary, keyFor, setSummary } from "@/lib/summaryCache";
 import type { HFItem } from "@/lib/hf";
 
+// Aligned with the HF feed's server cache TTL — polling faster just re-serves cached items.
+const REFRESH_MS = 5 * 60 * 1000;
+
 interface Props {
   module: ModuleInstance;
   onRemove: (id: string) => void;
@@ -136,7 +139,11 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
 
   useEffect(() => {
     void load();
-    return () => abortRef.current?.abort();
+    const id = window.setInterval(() => void load(), REFRESH_MS);
+    return () => {
+      window.clearInterval(id);
+      abortRef.current?.abort();
+    };
   }, [load]);
 
   useEffect(() => {

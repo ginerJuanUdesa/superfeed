@@ -153,11 +153,16 @@ export default function Grid() {
   // A drag that actually moved must not turn into a click on the card underneath.
   const onDragStart = () => {
     movedRef.current = false;
+    // Kill text selection across the whole document while the drag is live —
+    // scoping user-select:none to just the dragged item isn't enough because
+    // the cursor sweeps over other cards' text mid-drag.
+    document.body.classList.add("unyapper-dragging");
   };
   const onDrag = () => {
     movedRef.current = true;
   };
   const onDragStop = () => {
+    document.body.classList.remove("unyapper-dragging");
     if (!movedRef.current) return;
     movedRef.current = false;
     const swallow = (e: MouseEvent) => {
@@ -277,6 +282,8 @@ export default function Grid() {
             onDragStart={onDragStart}
             onDrag={onDrag}
             onDragStop={onDragStop}
+            onResizeStart={onDragStart}
+            onResizeStop={onDragStop}
             draggableCancel=".no-drag,input,button"
             compactType={null}
             preventCollision={true}
