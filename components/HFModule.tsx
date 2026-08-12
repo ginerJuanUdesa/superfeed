@@ -351,7 +351,7 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
                       )}
                       <div className="min-w-0 flex-1">
                         <div
-                          className="text-sm font-semibold truncate"
+                          className="text-sm font-semibold break-all"
                           style={{ color: HF.text }}
                         >
                           {item.author}/{item.name}
