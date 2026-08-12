@@ -72,7 +72,7 @@ async function fetchAllPages(
 async function fetchMemberOrgs(
   user: string,
   token: string | undefined
-): Promise<{ name?: string; avatarUrl?: string }[]> {
+): Promise<{ user?: string; name?: string; avatarUrl?: string }[]> {
   const url = `${HF_BASE}/api/users/${encodeURIComponent(user)}/overview`;
   try {
     const res = await fetch(url, {
@@ -184,29 +184,43 @@ const COMMIT_PATH: Record<Exclude<HFKind, "paper">, string> = {
   space: "spaces",
 };
 
-/** Latest commit title for a repo — tells us WHAT changed on an update. */
-async function fetchLastCommit(
+interface CommitInfo {
+  title?: string;
+  by?: string;
+  date?: string;
+}
+
+/**
+ * Fetch recent commits — title/author of the head commit powers the UI, and
+ * the timing of previous commits drives release-vs-update classification.
+ * We ask for a handful so we can see whether the latest commit is part of an
+ * initial-release burst (many commits clustered) or an isolated follow-up.
+ */
+async function fetchRecentCommits(
   item: HFItem,
   token: string | undefined
-): Promise<{ title?: string; by?: string }> {
-  if (item.kind === "paper") return {};
-  const url = `${HF_BASE}/api/${COMMIT_PATH[item.kind]}/${item.id}/commits/main?limit=1`;
+): Promise<CommitInfo[]> {
+  if (item.kind === "paper") return [];
+  const url = `${HF_BASE}/api/${COMMIT_PATH[item.kind]}/${item.id}/commits/main?limit=10`;
   try {
     const res = await fetch(url, {
       headers: headers(token),
       cache: "no-store",
       signal: AbortSignal.timeout(8_000),
     });
-    if (!res.ok) return {};
+    if (!res.ok) return [];
     const raw = (await res.json()) as Array<{
       title?: string;
+      date?: string;
       authors?: { user?: string }[];
     }>;
-    const c = raw[0];
-    if (!c) return {};
-    return { title: c.title?.trim(), by: c.authors?.[0]?.user };
+    return raw.map((c) => ({
+      title: c.title?.trim(),
+      by: c.authors?.[0]?.user,
+      date: c.date,
+    }));
   } catch {
-    return {};
+    return [];
   }
 }
 
@@ -262,13 +276,18 @@ export async function fetchFeed(opts: {
   perAuthorLimit?: number;
   token?: string;
   maxItems?: number;
+  /** Skip the in-memory cache entirely — used on page reload so the user
+   * sees fresh data instead of stale items served from the 5-min TTL. */
+  fresh?: boolean;
 }): Promise<HFItem[]> {
-  const { user, kinds, since, perAuthorLimit = 10, token, maxItems = 80 } = opts;
+  const { user, kinds, since, perAuthorLimit = 30, token, maxItems = 80, fresh } = opts;
 
-  // v6: release/update classified by createdAt vs since + 3d initial-release window.
-  const cacheKey = `v6|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
-  const hit = feedCache.get(cacheKey);
-  if (hit && Date.now() - hit.at < FEED_TTL_MS) return hit.items;
+  // v7: commit-gap classification (last commit isolated → update, clustered → release).
+  const cacheKey = `v7|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
+  if (!fresh) {
+    const hit = feedCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < FEED_TTL_MS) return hit.items;
+  }
 
   const following = await fetchFollowing(user, token);
   // name -> avatar, which also dedupes accounts returned by both endpoints
@@ -296,28 +315,6 @@ export async function fetchFeed(opts: {
     ? flat.filter((it) => Date.parse(it.lastModified) >= sinceMs)
     : flat;
 
-  // Classify NEW vs UPDATE — approximate what HF's activity feed shows as
-  // separate "released" / "updated by X" events. A repo is an UPDATE if EITHER:
-  //  - it existed before the user's `since` (pre-existing repo just got a
-  //    commit — not new to them), OR
-  //  - the last commit landed well after the repo was created (the initial
-  //    release window is over, so this touch is a follow-up commit)
-  // The 3-day window covers most real initial-release bursts without
-  // misclassifying weeks-later maintenance commits like mlabonne's push to
-  // LiquidAI/LFM2.5-2.6B ten days after that repo went live.
-  const INITIAL_RELEASE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
-  for (const it of filtered) {
-    if (!it.createdAt) {
-      it.isUpdate = true;
-      continue;
-    }
-    const created = Date.parse(it.createdAt);
-    const modified = Date.parse(it.lastModified);
-    const preexisting = sinceMs ? created < sinceMs : false;
-    const laterCommit = modified - created > INITIAL_RELEASE_WINDOW_MS;
-    it.isUpdate = preexisting || laterCommit;
-  }
-
   filtered.sort((a, b) => Date.parse(b.lastModified) - Date.parse(a.lastModified));
   const dedup = new Map<string, HFItem>();
   for (const it of filtered) {
@@ -328,13 +325,41 @@ export async function fetchFeed(opts: {
 
   // Only the items we actually return get a commit lookup.
   const commits = await pool(
-    items.map((it) => () => fetchLastCommit(it, token)),
+    items.map((it) => () => fetchRecentCommits(it, token)),
     12
   );
+
+  // Classify NEW vs UPDATE from the commit history — this is what HF's own
+  // activity feed effectively encodes as distinct "released" / "updated by X"
+  // events, and timestamps alone can't distinguish them:
+  //   - Only 1 commit ever → RELEASE (initial upload, no history yet).
+  //   - Last commit clustered with the previous one (small gap) → RELEASE
+  //     (part of the initial upload burst — READMEs, safetensors shards,
+  //     tokenizer files typically land within hours of the first commit).
+  //   - Last commit isolated from the previous one (big gap) → UPDATE
+  //     (a follow-up push landed long after the initial burst settled).
+  // 12h is the gap threshold — well above a normal upload burst, well below
+  // any realistic "same-release" cadence.
+  const CLUSTER_GAP_MS = 12 * 60 * 60 * 1000;
   items.forEach((it, i) => {
-    it.lastCommit = commits[i]?.title;
-    it.lastCommitBy = commits[i]?.by;
+    const list = commits[i] ?? [];
+    const head = list[0];
+    it.lastCommit = head?.title;
+    it.lastCommitBy = head?.by;
     it.avatarUrl = avatars.get(it.author);
+
+    if (list.length < 2) {
+      // No history to compare against — treat as release.
+      it.isUpdate = false;
+      return;
+    }
+    const headDate = Date.parse(head?.date ?? it.lastModified);
+    const prevDate = Date.parse(list[1].date ?? "");
+    if (!Number.isFinite(headDate) || !Number.isFinite(prevDate)) {
+      it.isUpdate = false;
+      return;
+    }
+    it.isUpdate = headDate - prevDate > CLUSTER_GAP_MS;
   });
 
   feedCache.set(cacheKey, { at: Date.now(), items });

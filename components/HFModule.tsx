@@ -92,7 +92,7 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh = false) => {
     const settings = loadSettings();
     const user = settings.hfUsername.trim();
     if (!user) {
@@ -119,6 +119,7 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
           kinds: anyKinds,
           since: settings.startDate || undefined,
           token: settings.hfToken || undefined,
+          fresh,
         }),
         signal: ctrl.signal,
       });
@@ -138,8 +139,10 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
   }, [anyKinds]);
 
   useEffect(() => {
-    void load();
-    const id = window.setInterval(() => void load(), REFRESH_MS);
+    // Mount = page reload or module remount → bypass server cache so the user
+    // sees new HF activity, not a 5-min-old snapshot. Polling still uses cache.
+    void load(true);
+    const id = window.setInterval(() => void load(false), REFRESH_MS);
     return () => {
       window.clearInterval(id);
       abortRef.current?.abort();

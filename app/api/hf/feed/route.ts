@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
       kinds?: HFKind[];
       since?: string;
       token?: string;
+      fresh?: boolean;
     };
     const user = (body.user ?? "").trim();
     if (!user) {
@@ -24,6 +25,7 @@ export async function POST(req: NextRequest) {
       kinds,
       since: body.since,
       token: body.token,
+      fresh: body.fresh,
     });
     return NextResponse.json({ items });
   } catch (err) {
