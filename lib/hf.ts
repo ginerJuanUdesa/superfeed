@@ -285,8 +285,8 @@ export async function fetchFeed(opts: {
 }): Promise<HFItem[]> {
   const { user, kinds, since, perAuthorLimit = 30, token, maxItems = 80, fresh } = opts;
 
-  // v10: initial-burst classification + accumulated commit diff for updates.
-  const cacheKey = `v10|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
+  // v11: skip HF's auto "initial commit" scaffold when finding first burst.
+  const cacheKey = `v11|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
   if (!fresh) {
     const hit = feedCache.get(cacheKey);
     if (hit && Date.now() - hit.at < FEED_TTL_MS) return hit.items;
@@ -349,7 +349,9 @@ export async function fetchFeed(opts: {
   // initial burst (deduplicating consecutive repeats like "Update README.md"
   // × 5) so the UI can show what actually changed instead of the stale repo
   // description.
-  const CLUSTER_GAP_MS = 12 * 60 * 60 * 1000;
+  // 24h absorbs day-after README polish / arXiv citation adds as part of the
+  // initial release; real follow-up updates land days or weeks later.
+  const CLUSTER_GAP_MS = 24 * 60 * 60 * 1000;
   const UPDATE_TITLES_CAP = 10;
   const COMMITS_LIMIT = 30;
   items.forEach((it, i) => {
@@ -371,9 +373,27 @@ export async function fetchFeed(opts: {
 
     // Commits arrive newest-first; walk chronologically to find the end of
     // the initial burst (index in `chrono` of the last commit still inside it).
+    // HF auto-creates an "initial commit" (empty placeholder) at repo creation
+    // time — the real release lands days later. Skip that placeholder when it's
+    // isolated from the rest, so the burst starts at the real first push.
     const chrono = [...list].reverse();
-    let initialBurstEnd = 0;
-    for (let j = 1; j < chrono.length; j++) {
+    let burstStart = 0;
+    if (
+      chrono.length >= 2 &&
+      chrono[0].title?.trim().toLowerCase() === "initial commit"
+    ) {
+      const first = Date.parse(chrono[0].date ?? "");
+      const second = Date.parse(chrono[1].date ?? "");
+      if (
+        Number.isFinite(first) &&
+        Number.isFinite(second) &&
+        second - first > CLUSTER_GAP_MS
+      ) {
+        burstStart = 1;
+      }
+    }
+    let initialBurstEnd = burstStart;
+    for (let j = burstStart + 1; j < chrono.length; j++) {
       const prev = Date.parse(chrono[j - 1].date ?? "");
       const cur = Date.parse(chrono[j].date ?? "");
       if (!Number.isFinite(prev) || !Number.isFinite(cur)) break;
