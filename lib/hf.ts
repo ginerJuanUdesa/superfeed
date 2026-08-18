@@ -282,8 +282,8 @@ export async function fetchFeed(opts: {
 }): Promise<HFItem[]> {
   const { user, kinds, since, perAuthorLimit = 30, token, maxItems = 80, fresh } = opts;
 
-  // v7: commit-gap classification (last commit isolated → update, clustered → release).
-  const cacheKey = `v7|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
+  // v8: commit-gap + repo-age classification (bursts long after createdAt → update).
+  const cacheKey = `v8|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
   if (!fresh) {
     const hit = feedCache.get(cacheKey);
     if (hit && Date.now() - hit.at < FEED_TTL_MS) return hit.items;
@@ -329,18 +329,18 @@ export async function fetchFeed(opts: {
     12
   );
 
-  // Classify NEW vs UPDATE from the commit history — this is what HF's own
-  // activity feed effectively encodes as distinct "released" / "updated by X"
-  // events, and timestamps alone can't distinguish them:
-  //   - Only 1 commit ever → RELEASE (initial upload, no history yet).
-  //   - Last commit clustered with the previous one (small gap) → RELEASE
-  //     (part of the initial upload burst — READMEs, safetensors shards,
-  //     tokenizer files typically land within hours of the first commit).
-  //   - Last commit isolated from the previous one (big gap) → UPDATE
-  //     (a follow-up push landed long after the initial burst settled).
-  // 12h is the gap threshold — well above a normal upload burst, well below
-  // any realistic "same-release" cadence.
+  // Classify NEW vs UPDATE from repo age + commit history. Two independent
+  // signals; either one is enough to mark UPDATE:
+  //   1) Repo age: if the head commit lands well after createdAt, the repo
+  //      already exists — it's an update, no matter how the commits cluster.
+  //      Catches "same repo, second release" patterns (e.g. inclusionAI/Ling-flash
+  //      pushing weights+config+README in one burst weeks after the repo went up).
+  //   2) Commit gap: if the head is isolated from the previous commit by
+  //      >12h, it's an update (a follow-up push, not part of the initial
+  //      upload burst of READMEs/shards/tokenizer files).
+  // Only when BOTH say "recent + clustered" do we call it a release.
   const CLUSTER_GAP_MS = 12 * 60 * 60 * 1000;
+  const REPO_AGE_MS = 7 * 24 * 60 * 60 * 1000;
   items.forEach((it, i) => {
     const list = commits[i] ?? [];
     const head = list[0];
@@ -348,12 +348,21 @@ export async function fetchFeed(opts: {
     it.lastCommitBy = head?.by;
     it.avatarUrl = avatars.get(it.author);
 
+    const headDate = Date.parse(head?.date ?? it.lastModified);
+    const createdDate = it.createdAt ? Date.parse(it.createdAt) : NaN;
+    if (
+      Number.isFinite(headDate) &&
+      Number.isFinite(createdDate) &&
+      headDate - createdDate > REPO_AGE_MS
+    ) {
+      it.isUpdate = true;
+      return;
+    }
+
     if (list.length < 2) {
-      // No history to compare against — treat as release.
       it.isUpdate = false;
       return;
     }
-    const headDate = Date.parse(head?.date ?? it.lastModified);
     const prevDate = Date.parse(list[1].date ?? "");
     if (!Number.isFinite(headDate) || !Number.isFinite(prevDate)) {
       it.isUpdate = false;
