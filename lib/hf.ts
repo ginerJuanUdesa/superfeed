@@ -22,8 +22,11 @@ export interface HFItem {
   lastCommit?: string;
   /** Who pushed the last commit. */
   lastCommitBy?: string;
-  /** True when the repo was created long before it was last touched. */
+  /** True when the head commit is NOT part of the repo's initial release burst. */
   isUpdate?: boolean;
+  /** Deduplicated commit titles after the initial release burst — what changed
+   * since the first release. Populated for UPDATE items only. */
+  updateCommits?: string[];
   createdAt?: string;
   /** Profile picture of the org/user that owns the repo — drives the card color. */
   avatarUrl?: string;
@@ -201,7 +204,7 @@ async function fetchRecentCommits(
   token: string | undefined
 ): Promise<CommitInfo[]> {
   if (item.kind === "paper") return [];
-  const url = `${HF_BASE}/api/${COMMIT_PATH[item.kind]}/${item.id}/commits/main?limit=10`;
+  const url = `${HF_BASE}/api/${COMMIT_PATH[item.kind]}/${item.id}/commits/main?limit=30`;
   try {
     const res = await fetch(url, {
       headers: headers(token),
@@ -282,8 +285,8 @@ export async function fetchFeed(opts: {
 }): Promise<HFItem[]> {
   const { user, kinds, since, perAuthorLimit = 30, token, maxItems = 80, fresh } = opts;
 
-  // v8: commit-gap + repo-age classification (bursts long after createdAt → update).
-  const cacheKey = `v8|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
+  // v10: initial-burst classification + accumulated commit diff for updates.
+  const cacheKey = `v10|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
   if (!fresh) {
     const hit = feedCache.get(cacheKey);
     if (hit && Date.now() - hit.at < FEED_TTL_MS) return hit.items;
@@ -329,18 +332,26 @@ export async function fetchFeed(opts: {
     12
   );
 
-  // Classify NEW vs UPDATE from repo age + commit history. Two independent
-  // signals; either one is enough to mark UPDATE:
-  //   1) Repo age: if the head commit lands well after createdAt, the repo
-  //      already exists — it's an update, no matter how the commits cluster.
-  //      Catches "same repo, second release" patterns (e.g. inclusionAI/Ling-flash
-  //      pushing weights+config+README in one burst weeks after the repo went up).
-  //   2) Commit gap: if the head is isolated from the previous commit by
-  //      >12h, it's an update (a follow-up push, not part of the initial
-  //      upload burst of READMEs/shards/tokenizer files).
-  // Only when BOTH say "recent + clustered" do we call it a release.
+  // Classify RELEASE vs UPDATE by finding the repo's initial-release burst
+  // and asking whether the head commit is still inside it.
+  //
+  // A "burst" is a run of commits with no gap larger than CLUSTER_GAP_MS.
+  // The initial burst is the first such run, starting from the oldest commit
+  // we can see. If the head commit is inside that first burst, this is still
+  // the initial release (READMEs/shards/tokenizer landing over a day or two).
+  // Anything after the first >12h gap is an UPDATE, no matter how many
+  // subsequent commits cluster together.
+  //
+  // If our fetched window doesn't reach back to createdAt, the initial burst
+  // is off-screen — so the head can't possibly be in it → UPDATE.
+  //
+  // For UPDATE items we also collect the commit titles that fall after the
+  // initial burst (deduplicating consecutive repeats like "Update README.md"
+  // × 5) so the UI can show what actually changed instead of the stale repo
+  // description.
   const CLUSTER_GAP_MS = 12 * 60 * 60 * 1000;
-  const REPO_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  const UPDATE_TITLES_CAP = 10;
+  const COMMITS_LIMIT = 30;
   items.forEach((it, i) => {
     const list = commits[i] ?? [];
     const head = list[0];
@@ -348,27 +359,62 @@ export async function fetchFeed(opts: {
     it.lastCommitBy = head?.by;
     it.avatarUrl = avatars.get(it.author);
 
-    const headDate = Date.parse(head?.date ?? it.lastModified);
-    const createdDate = it.createdAt ? Date.parse(it.createdAt) : NaN;
-    if (
-      Number.isFinite(headDate) &&
-      Number.isFinite(createdDate) &&
-      headDate - createdDate > REPO_AGE_MS
-    ) {
-      it.isUpdate = true;
+    if (list.length === 0) {
+      it.isUpdate = false;
+      return;
+    }
+    if (list.length === 1) {
+      // Only commit ever seen → treat as the initial release.
+      it.isUpdate = false;
       return;
     }
 
-    if (list.length < 2) {
-      it.isUpdate = false;
-      return;
+    // Commits arrive newest-first; walk chronologically to find the end of
+    // the initial burst (index in `chrono` of the last commit still inside it).
+    const chrono = [...list].reverse();
+    let initialBurstEnd = 0;
+    for (let j = 1; j < chrono.length; j++) {
+      const prev = Date.parse(chrono[j - 1].date ?? "");
+      const cur = Date.parse(chrono[j].date ?? "");
+      if (!Number.isFinite(prev) || !Number.isFinite(cur)) break;
+      if (cur - prev > CLUSTER_GAP_MS) break;
+      initialBurstEnd = j;
     }
-    const prevDate = Date.parse(list[1].date ?? "");
-    if (!Number.isFinite(headDate) || !Number.isFinite(prevDate)) {
-      it.isUpdate = false;
-      return;
+
+    // Only check "initial burst off-screen" when we hit the fetch limit —
+    // if we got fewer commits than we asked for, we have the entire history
+    // and the oldest fetched commit IS the repo's very first commit (even
+    // when it's dated well after createdAt — authors sometimes create the
+    // repo and start pushing days later).
+    const oldestDate = Date.parse(chrono[0].date ?? "");
+    const createdDate = it.createdAt ? Date.parse(it.createdAt) : NaN;
+    const initialBurstOffscreen =
+      list.length >= COMMITS_LIMIT &&
+      Number.isFinite(oldestDate) &&
+      Number.isFinite(createdDate) &&
+      oldestDate - createdDate > CLUSTER_GAP_MS;
+
+    const headInInitialBurst =
+      !initialBurstOffscreen && initialBurstEnd === chrono.length - 1;
+    it.isUpdate = !headInInitialBurst;
+
+    if (it.isUpdate) {
+      // Commits after the initial burst, newest-first, deduped for consecutive
+      // identical titles. If the initial burst is off-screen, everything we
+      // fetched is post-release.
+      const postBurst = initialBurstOffscreen
+        ? chrono
+        : chrono.slice(initialBurstEnd + 1);
+      const titles: string[] = [];
+      for (let j = postBurst.length - 1; j >= 0; j--) {
+        const t = postBurst[j].title?.trim();
+        if (!t) continue;
+        if (titles.length && titles[titles.length - 1] === t) continue;
+        titles.push(t);
+        if (titles.length >= UPDATE_TITLES_CAP) break;
+      }
+      it.updateCommits = titles;
     }
-    it.isUpdate = headDate - prevDate > CLUSTER_GAP_MS;
   });
 
   feedCache.set(cacheKey, { at: Date.now(), items });

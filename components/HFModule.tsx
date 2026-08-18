@@ -156,6 +156,8 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
     const initSummaries: Record<string, string> = {};
     const pending: HFItem[] = [];
     for (const it of items) {
+      // UPDATE cards show the accumulated commit diff, not an LLM summary.
+      if (it.isUpdate) continue;
       const k = keyFor(it.kind, it.id, it.isUpdate);
       const cachedSummary = getSummary(k);
       if (cachedSummary) initSummaries[k] = cachedSummary;
@@ -265,10 +267,12 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
             {visibleItems.map((item) => {
               const k = keyFor(item.kind, item.id, item.isUpdate);
               const summary = summaries[k];
-              const fallback = item.isUpdate
-                ? item.lastCommit ?? item.description
-                : item.description ?? item.lastCommit;
-              const subline = summary ?? fallback;
+              // Releases: LLM summary of the model. Updates: the actual
+              // commit-title diff since the initial release burst.
+              const updateTitles = item.isUpdate ? item.updateCommits ?? [] : [];
+              const subline = item.isUpdate
+                ? undefined
+                : summary ?? item.description ?? item.lastCommit;
               const verb = item.isUpdate ? "updated" : "released";
               return (
                 <li key={k}>
@@ -356,7 +360,33 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
                         >
                           {item.author}/{item.name}
                         </div>
-                        {subline ? (
+                        {item.isUpdate ? (
+                          updateTitles.length > 0 ? (
+                            <ul
+                              className="text-[11px] mt-1 leading-snug space-y-0.5"
+                              style={{ color: HF.textMuted }}
+                            >
+                              {updateTitles.map((t, idx) => (
+                                <li key={idx} className="flex gap-1.5">
+                                  <span
+                                    className="shrink-0"
+                                    style={{ color: HF.textFaint }}
+                                  >
+                                    •
+                                  </span>
+                                  <span className="truncate">{t}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div
+                              className="text-[11px] mt-0.5 italic"
+                              style={{ color: HF.textFaint }}
+                            >
+                              no commit history
+                            </div>
+                          )
+                        ) : subline ? (
                           <div
                             className="text-[11px] mt-0.5 leading-snug line-clamp-2"
                             style={{ color: HF.textMuted }}
