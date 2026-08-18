@@ -169,7 +169,10 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
     if (!settings.localLlmUrl || !pending.length) return;
 
     let cancelled = false;
-    const CONC = 6;
+    // Serialize summarizer calls — most local LLM backends process one
+    // request at a time anyway, and firing in parallel just wastes queue
+    // pressure on the backend without arriving faster.
+    const CONC = 1;
     let idx = 0;
     async function worker() {
       while (!cancelled && idx < pending.length) {
