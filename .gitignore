@@ -44,6 +44,8 @@ next-env.d.ts
 unyapper.log
 .playwright-mcp/
 grid-2-modules.png
+# per-host local state (settings export, misc user data)
+.local/
 
 # local tooling / agent config (personal)
 .claude/
