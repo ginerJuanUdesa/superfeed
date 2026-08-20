@@ -12,8 +12,18 @@ concurrency:
 jobs:
   deploy:
     runs-on: [self-hosted, laptop]
+    # Run all steps in the directory the systemd unit serves from — the runner's
+    # own workspace is a different tree, so building there deploys nothing.
+    defaults:
+      run:
+        working-directory: /home/codderg/apps/unyapper
     steps:
-      - uses: actions/checkout@v4
+      - name: pull main
+        run: |
+          git fetch origin main
+          # Hard-reset onto origin — .local/ (state.json) is gitignored and survives.
+          git reset --hard origin/main
+          git log -1 --oneline
 
       - name: install deps
         run: npm ci
