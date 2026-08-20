@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.github
+.local
+.vercel
+.playwright-mcp
+coverage
+build
+out
+Dockerfile
+docker-compose.yml
+*.log
+.env*
+!/.env.example

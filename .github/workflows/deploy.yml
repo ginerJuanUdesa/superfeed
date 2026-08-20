@@ -12,8 +12,6 @@ concurrency:
 jobs:
   deploy:
     runs-on: [self-hosted, laptop]
-    # Run all steps in the directory the systemd unit serves from — the runner's
-    # own workspace is a different tree, so building there deploys nothing.
     defaults:
       run:
         working-directory: /home/codderg/apps/unyapper
@@ -25,23 +23,28 @@ jobs:
           git reset --hard origin/main
           git log -1 --oneline
 
-      - name: install deps
-        run: npm ci
+      - name: retire legacy systemd unit (idempotent)
+        run: |
+          # First deploy after the docker cutover: stop the host `next start`
+          # unit so its :3000 bind doesn't collide with the container.
+          systemctl --user stop unyapper.service 2>/dev/null || true
+          systemctl --user disable unyapper.service 2>/dev/null || true
 
-      - name: build
-        run: npm run build
+      - name: build & up
+        run: docker compose up -d --build --remove-orphans
 
-      - name: restart service
-        run: systemctl --user restart unyapper.service
+      - name: prune dangling images
+        run: docker image prune -f
 
       - name: health check
         run: |
-          for i in {1..30}; do
+          for i in {1..60}; do
             if curl -fsS -o /dev/null http://127.0.0.1:3000/; then
               echo "up"; exit 0
             fi
             sleep 1
           done
-          echo "did not come up in 30s" >&2
-          systemctl --user status unyapper.service --no-pager | tail -30
+          echo "did not come up in 60s" >&2
+          docker compose ps
+          docker compose logs --tail=80 unyapper
           exit 1

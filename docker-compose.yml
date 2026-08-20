@@ -1,0 +1,32 @@
+services:
+  unyapper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: unyapper:latest
+    container_name: unyapper
+    restart: unless-stopped
+    # Env like REDMINE_URL / LOCAL_LLM_API_KEY sits in .env.local on the host,
+    # NOT baked into the image. Kept out of git via .gitignore.
+    env_file:
+      - .env.local
+    ports:
+      - "3000:3000"
+    volumes:
+      # User-writable state (settings + grid layout) persisted on the host so
+      # rebuilds don't wipe it. Matches lib/serverState.ts writing to .local/.
+      - ./.local:/app/.local
+    networks:
+      - apps
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+# External network so future apps on the same host can join without recreating
+# this one. Create once with: `docker network create apps`.
+networks:
+  apps:
+    external: true
