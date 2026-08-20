@@ -235,8 +235,6 @@ export default function Grid() {
         ? "Upcoming"
         : type === "github"
         ? "Feed"
-        : type === "redmine"
-        ? "Redmine"
         : "HF Feed";
     const allKinds = ["model", "dataset", "space", "paper"] as HFKind[];
     // Both module types default to "everything included": HF gets all four
