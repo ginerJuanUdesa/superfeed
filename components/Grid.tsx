@@ -6,10 +6,10 @@ import { GearSix, SquaresFour } from "@phosphor-icons/react";
 import Module from "./Module";
 import SettingsModal, { applyThemeMode, loadSettings } from "./SettingsModal";
 import { HFKind, ModuleInstance, ModuleType } from "@/lib/types";
+import { getCachedGrid, hydrate, saveGrid } from "@/lib/clientState";
 
 const ResponsiveGrid = WidthProvider(GridLayout);
 
-const STORAGE_KEY = "unyapper:v1";
 const COLS = 12;
 const MARGIN = 12;
 const ROW_HEIGHT = 60;
@@ -93,18 +93,16 @@ interface PersistedState {
 }
 
 function loadState(): PersistedState {
-  if (typeof window === "undefined") return { modules: [], layout: [] };
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { modules: [], layout: [] };
-    return JSON.parse(raw);
-  } catch {
-    return { modules: [], layout: [] };
-  }
+  const raw = getCachedGrid<PersistedState | null>();
+  if (!raw) return { modules: [], layout: [] };
+  return {
+    modules: raw.modules ?? [],
+    layout: raw.layout ?? [],
+  };
 }
 
 function saveState(state: PersistedState) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  saveGrid(state);
 }
 
 function makeId() {
@@ -127,18 +125,29 @@ export default function Grid() {
   const dropzoneRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const s = loadState();
-    setModules(s.modules);
-    setLayout(s.layout);
-    // Apply the persisted theme choice on first paint so the shell doesn't
-    // flash the default dark palette when the user has picked light or system.
-    applyThemeMode(loadSettings().themeMode);
-    setHydrated(true);
+    let cancelled = false;
+    hydrate().then(() => {
+      if (cancelled) return;
+      const s = loadState();
+      setModules(s.modules);
+      setLayout(s.layout);
+      // Apply the persisted theme choice on first paint so the shell doesn't
+      // flash the default dark palette when the user has picked light or system.
+      applyThemeMode(loadSettings().themeMode);
+      setHydrated(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
-    saveState({ modules, layout });
+    // Debounce: react-grid-layout fires onLayoutChange on every drag/resize
+    // frame, and JSON.stringify of the full state on each one pegs the main
+    // thread. 300 ms after the last change is plenty for crash-recovery.
+    const id = window.setTimeout(() => saveState({ modules, layout }), 300);
+    return () => window.clearTimeout(id);
   }, [modules, layout, hydrated]);
 
   const removeModule = (id: string) => {
@@ -226,6 +235,8 @@ export default function Grid() {
         ? "Upcoming"
         : type === "github"
         ? "Feed"
+        : type === "redmine"
+        ? "Redmine"
         : "HF Feed";
     const allKinds = ["model", "dataset", "space", "paper"] as HFKind[];
     // Both module types default to "everything included": HF gets all four
@@ -326,6 +337,7 @@ function Toolbar({
       <DraggableTile type="gmail" onDragStart={onDragStart} />
       <DraggableTile type="calendar" onDragStart={onDragStart} />
       <DraggableTile type="github" onDragStart={onDragStart} />
+      <DraggableTile type="redmine" onDragStart={onDragStart} />
     </div>
   );
 }
@@ -364,6 +376,8 @@ function DraggableTile({
       ? "Google Calendar"
       : type === "github"
       ? "GitHub feed"
+      : type === "redmine"
+      ? "Redmine issues"
       : "HuggingFace feed";
   return (
     <div
@@ -385,11 +399,49 @@ function DraggableTile({
       ) : type === "github" ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src="/logos/github.png" alt="GitHub" width={24} height={24} className="pointer-events-none" style={{ filter: "invert(1)" }} draggable={false} />
+      ) : type === "redmine" ? (
+        <RedmineTileIcon />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img src="/logos/hf.png" alt="HuggingFace" width={28} height={28} className="pointer-events-none" draggable={false} />
       )}
     </div>
+  );
+}
+
+/** Placeholder for the Redmine rail tile: swaps to /logos/redmine.png the
+ *  moment that file is dropped in, without changing any wiring. */
+function RedmineTileIcon() {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div
+        className="pointer-events-none flex items-center justify-center rounded-sm"
+        style={{
+          width: 24,
+          height: 24,
+          background: "#a01515",
+          color: "#fff",
+          fontWeight: 700,
+          fontSize: 13,
+          fontFamily: "ui-monospace, monospace",
+        }}
+      >
+        R
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/logos/redmine.png"
+      alt="Redmine"
+      width={24}
+      height={24}
+      className="pointer-events-none"
+      draggable={false}
+      onError={() => setFailed(true)}
+    />
   );
 }
 

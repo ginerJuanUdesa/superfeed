@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-
-const STORAGE_KEY = "unyapper:settings:v1";
-const LEGACY_KEY = "unyapper:credentials:v1";
+import {
+  getCachedSettings,
+  saveSettings as pushSettings,
+} from "@/lib/clientState";
 
 export interface GmailAccount {
   label: string;
@@ -51,43 +52,40 @@ function todayISO() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/**
+ * Read the current settings from the in-memory cache. The cache is populated
+ * once at app boot via `hydrate()` — before that, callers get EMPTY.
+ * Same shape-migration logic as before (legacy shared OAuth client → per-account).
+ */
 export function loadSettings(): Settings {
-  if (typeof window === "undefined") return EMPTY;
-  try {
-    const raw =
-      localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_KEY);
-    if (!raw) return EMPTY;
-    const parsed = { ...EMPTY, ...JSON.parse(raw) } as Settings;
-    const sharedId = parsed.gmailClientId ?? "";
-    const sharedSecret = parsed.gmailClientSecret ?? "";
-    // Migrate legacy single-account refresh token into the accounts list.
-    if (!parsed.gmailAccounts?.length && parsed.gmailRefreshToken) {
-      parsed.gmailAccounts = [
-        {
-          label: "primary",
-          refreshToken: parsed.gmailRefreshToken,
-          clientId: sharedId,
-          clientSecret: sharedSecret,
-        },
-      ];
-    }
-    parsed.gmailAccounts ??= [];
-    // Backfill any accounts missing their own client from the legacy shared one.
-    parsed.gmailAccounts = parsed.gmailAccounts.map((a) => ({
-      label: a.label ?? "",
-      refreshToken: a.refreshToken ?? "",
-      clientId: a.clientId || sharedId || "",
-      clientSecret: a.clientSecret || sharedSecret || "",
-    }));
-    parsed.themeMode ??= "system";
-    return parsed;
-  } catch {
-    return EMPTY;
+  const raw = getCachedSettings<Partial<Settings> | null>();
+  if (!raw) return EMPTY;
+  const parsed = { ...EMPTY, ...raw } as Settings;
+  const sharedId = parsed.gmailClientId ?? "";
+  const sharedSecret = parsed.gmailClientSecret ?? "";
+  if (!parsed.gmailAccounts?.length && parsed.gmailRefreshToken) {
+    parsed.gmailAccounts = [
+      {
+        label: "primary",
+        refreshToken: parsed.gmailRefreshToken,
+        clientId: sharedId,
+        clientSecret: sharedSecret,
+      },
+    ];
   }
+  parsed.gmailAccounts ??= [];
+  parsed.gmailAccounts = parsed.gmailAccounts.map((a) => ({
+    label: a.label ?? "",
+    refreshToken: a.refreshToken ?? "",
+    clientId: a.clientId || sharedId || "",
+    clientSecret: a.clientSecret || sharedSecret || "",
+  }));
+  parsed.themeMode ??= "system";
+  return parsed;
 }
 
 function saveSettings(s: Settings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  pushSettings(s);
 }
 
 /**
