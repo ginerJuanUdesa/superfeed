@@ -1,4 +1,4 @@
-export type ModuleType = "gmail" | "hf" | "calendar" | "github";
+export type ModuleType = "gmail" | "hf" | "calendar" | "github" | "redmine";
 
 export type HFKind = "model" | "dataset" | "space" | "paper";
 
@@ -10,6 +10,12 @@ export interface HFConfig {
   updateKinds?: HFKind[];
   /** Legacy: pre-split kinds list (used to seed release+update on migration). */
   kinds?: HFKind[];
+}
+
+export interface RedmineConfig {
+  /** Redmine project ids the module should surface. Opt-in — empty means
+   *  "nothing selected yet, prompt the user via the menu". */
+  projectIds?: number[];
 }
 
 export interface GmailConfig {
