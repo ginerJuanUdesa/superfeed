@@ -7,6 +7,7 @@ import Module from "./Module";
 import SettingsModal, { applyThemeMode, loadSettings } from "./SettingsModal";
 import { HFKind, ModuleInstance, ModuleType } from "@/lib/types";
 import { flushPending, getCachedGrid, hydrate, saveGrid } from "@/lib/clientState";
+import { useIsMobile } from "@/lib/useIsMobile";
 
 const ResponsiveGrid = WidthProvider(GridLayout);
 
@@ -279,11 +280,23 @@ export default function Grid() {
 
   const moduleMap = useMemo(() => new Map(modules.map((m) => [m.id, m])), [modules]);
 
+  const isMobile = useIsMobile();
+
   if (!hydrated) {
     return (
       <div className="p-8 text-[var(--text-faint)] text-sm mono">
         loading
       </div>
+    );
+  }
+
+  if (isMobile) {
+    return (
+      <MobileCarousel
+        modules={modules}
+        layout={layout}
+        onUpdateConfig={updateConfig}
+      />
     );
   }
 
@@ -509,6 +522,92 @@ function EmptyHint() {
             Drag a module from the rail on the right onto this canvas.
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Mobile view: one full-screen module at a time, horizontally swipeable.
+ *
+ * The desktop `layout` decides the order — modules are read row-first
+ * (top-to-bottom, then left-to-right) so what the user sees on the phone
+ * mirrors the reading order of their PC dashboard. There is no add /
+ * remove / resize on mobile; that's PC-only by design.
+ */
+function MobileCarousel({
+  modules,
+  layout,
+  onUpdateConfig,
+}: {
+  modules: ModuleInstance[];
+  layout: Layout[];
+  onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
+}) {
+  const ordered = useMemo(() => {
+    const pos = new Map(layout.map((l) => [l.i, l]));
+    return [...modules].sort((a, b) => {
+      const la = pos.get(a.id);
+      const lb = pos.get(b.id);
+      if (!la || !lb) return 0;
+      return la.y - lb.y || la.x - lb.x;
+    });
+  }, [modules, layout]);
+
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const w = el.clientWidth || 1;
+      setIndex(Math.round(el.scrollLeft / w));
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  if (ordered.length === 0) {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center p-6 text-center text-sm text-[var(--text-muted)]">
+        No modules configured. Open the app on your PC to add some.
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative h-[100dvh] w-screen overflow-hidden">
+      <div
+        ref={scrollerRef}
+        className="h-full w-full flex overflow-x-auto overflow-y-hidden snap-x snap-mandatory"
+        style={{ scrollbarWidth: "none" }}
+      >
+        {ordered.map((m) => (
+          <div
+            key={m.id}
+            className="w-screen h-full shrink-0 snap-start p-2"
+          >
+            <Module
+              module={m}
+              onRemove={() => {}}
+              onUpdateConfig={onUpdateConfig}
+            />
+          </div>
+        ))}
+      </div>
+      {/* page indicator */}
+      <div className="pointer-events-none absolute bottom-2 left-0 right-0 flex justify-center gap-1.5">
+        {ordered.map((m, i) => (
+          <span
+            key={m.id}
+            className="w-1.5 h-1.5 rounded-full transition-opacity"
+            style={{
+              background: "var(--text)",
+              opacity: i === index ? 0.9 : 0.25,
+            }}
+          />
+        ))}
       </div>
     </div>
   );
