@@ -207,26 +207,6 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
         color: R.text,
       }}
     >
-      {/* dark top nav strip */}
-      <div
-        className="shrink-0 flex items-center justify-between px-2 text-[10px] gap-2 min-w-0"
-        style={{
-          background: R.navBg,
-          color: R.navText,
-          height: 20,
-          borderBottom: `1px solid #000`,
-        }}
-      >
-        <div className="flex gap-2 min-w-0 truncate">
-          <span>Home</span>
-          <span>Projects</span>
-          <span>Help</span>
-        </div>
-        <span className="shrink-0" style={{ color: R.navMuted }}>
-          claude
-        </span>
-      </div>
-
       {/* blue banner */}
       <div
         className="shrink-0 flex items-center justify-between px-2.5 gap-2 min-w-0"
@@ -320,25 +300,6 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
             </ul>
           </fieldset>
         ))}
-      </div>
-
-      {/* footer */}
-      <div
-        className="shrink-0 flex items-center justify-between px-2 text-[10px] gap-2 min-w-0"
-        style={{
-          background: R.bodyAlt,
-          borderTop: `1px solid ${R.fieldsetBorder}`,
-          color: R.muted,
-          height: 18,
-        }}
-      >
-        <span className="truncate">
-          {items ? items.length : 0}i · {selectedProjectIds.length}p
-          {loading && items ? " · …" : ""}
-        </span>
-        <span className="shrink-0" style={{ color: R.faint }}>
-          Redmine
-        </span>
       </div>
 
       <div className="absolute top-0.5 right-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex items-center gap-1">
