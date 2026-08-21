@@ -106,7 +106,6 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
   const [projects, setProjects] = useState<RedmineProject[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState("");
   const abortRef = useRef<AbortController | null>(null);
 
   const loadProjects = useCallback(async () => {
@@ -171,29 +170,17 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
     };
   }, [load]);
 
-  const filtered = useMemo(() => {
-    if (!items) return null;
-    const q = filter.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-      (i) =>
-        i.subject.toLowerCase().includes(q) ||
-        i.projectName.toLowerCase().includes(q) ||
-        String(i.id).includes(q)
-    );
-  }, [items, filter]);
-
   const groups = useMemo(() => {
-    if (!filtered) return null;
+    if (!items) return null;
     const byProject = new Map<string, RedmineIssue[]>();
-    for (const it of filtered) {
+    for (const it of items) {
       const key = it.projectName || "—";
       const arr = byProject.get(key);
       if (arr) arr.push(it);
       else byProject.set(key, [it]);
     }
     return [...byProject.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filtered]);
+  }, [items]);
 
   const noneSelected = selectedProjectIds.length === 0;
 
@@ -227,25 +214,6 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
         >
           Redmine
         </div>
-        <input
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          onMouseDown={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          placeholder="Search"
-          className="no-drag px-1.5 py-[1px] outline-none shrink min-w-0"
-          style={{
-            background: "#ffffff",
-            border: `1px solid #4a6f8f`,
-            color: R.text,
-            fontFamily: REDMINE_FONT,
-            fontSize: 11,
-            width: 100,
-            height: 20,
-          }}
-          spellCheck={false}
-          autoComplete="off"
-        />
       </div>
 
       {/* body */}

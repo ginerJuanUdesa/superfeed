@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
 import type { CalendarEvent } from "@/lib/calendar";
+import { useIsDark } from "@/lib/useIsDark";
 
 interface Props {
   module: ModuleInstance;
@@ -13,17 +14,26 @@ interface Props {
 
 const REFRESH_MS = 5 * 60 * 1000;
 
-/* Dark-panel palette — tokens are the app's own so this module lives inside
- * the dashboard's theme, not calendar.google.com's white one. The celeste is
- * from the reference frame Juan supplied. */
-const C = {
-  bg: "var(--surface)",
-  headerBg: "var(--surface-hi)",
-  border: "var(--border)",
-  text: "var(--text)",
-  textMuted: "var(--text-muted)",
-  textFaint: "var(--text-faint)",
-  accent: "var(--accent)",
+/* Palette mirrors GmailModule so both modules read as the same Google surface.
+ * Light quotes calendar.google.com; dark uses Gmail's own dark greys. */
+const C_LIGHT = {
+  bg: "#ffffff",
+  headerBg: "#f6f8fc",
+  border: "#e5e7eb",
+  text: "#202124",
+  textMuted: "#5f6368",
+  textFaint: "#80868b",
+  accent: "#1a73e8",
+};
+
+const C_DARK = {
+  bg: "#1f1f1f",
+  headerBg: "#2a2a2a",
+  border: "#3c3c3c",
+  text: "#e8eaed",
+  textMuted: "#9aa0a6",
+  textFaint: "#7d8286",
+  accent: "#8ab4f8",
 };
 
 /** Sky-blue pastel used as the base event color. Two variants:
@@ -76,6 +86,7 @@ function fmtTime(ev: CalendarEvent): string {
 }
 
 export default function CalendarModule({ module, onRemove, onUpdateConfig }: Props) {
+  const C = useIsDark() ? C_DARK : C_LIGHT;
   const configuredAccounts = useMemo(() => {
     const s = loadSettings();
     return s.gmailAccounts.map((a) => a.label.trim()).filter(Boolean);
@@ -340,6 +351,7 @@ function BurgerMenu({
   selected: string[];
   onChange: (next: string[]) => void;
 }) {
+  const C = useIsDark() ? C_DARK : C_LIGHT;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
