@@ -31,7 +31,10 @@ jobs:
           systemctl --user disable unyapper.service 2>/dev/null || true
 
       - name: build & up
-        run: docker compose up -d --build --remove-orphans
+        # nice/ionice keep the build from starving the runner's heartbeat.
+        # Without them, `next build` pins CPU/IO and GitHub marks the runner
+        # offline mid-job, killing the deploy.
+        run: nice -n 19 ionice -c3 docker compose up -d --build --remove-orphans
 
       - name: prune dangling images
         run: docker image prune -f
