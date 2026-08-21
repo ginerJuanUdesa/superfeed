@@ -170,16 +170,11 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
     };
   }, [load]);
 
-  const groups = useMemo(() => {
+  const sortedItems = useMemo(() => {
     if (!items) return null;
-    const byProject = new Map<string, RedmineIssue[]>();
-    for (const it of items) {
-      const key = it.projectName || "—";
-      const arr = byProject.get(key);
-      if (arr) arr.push(it);
-      else byProject.set(key, [it]);
-    }
-    return [...byProject.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    return [...items].sort(
+      (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+    );
   }, [items]);
 
   const noneSelected = selectedProjectIds.length === 0;
@@ -245,29 +240,13 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
           </div>
         )}
 
-        {groups?.map(([projectName, list]) => (
-          <fieldset
-            key={projectName}
-            className="mb-2 min-w-0"
-            style={{
-              background: R.fieldsetBg,
-              border: `1px solid ${R.fieldsetBorder}`,
-              padding: "4px 6px 6px",
-            }}
-          >
-            <legend
-              className="px-1 font-bold truncate max-w-full"
-              style={{ color: R.legendText, fontSize: 11 }}
-            >
-              {projectName}
-            </legend>
-            <ul className="flex flex-col gap-1">
-              {list.map((it) => (
-                <IssueCard key={`${it.projectId}-${it.id}`} item={it} />
-              ))}
-            </ul>
-          </fieldset>
-        ))}
+        {sortedItems && sortedItems.length > 0 && (
+          <ul>
+            {sortedItems.map((it) => (
+              <IssueCard key={`${it.projectId}-${it.id}`} item={it} />
+            ))}
+          </ul>
+        )}
       </div>
 
       <div className="absolute top-0.5 right-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex items-center gap-1">

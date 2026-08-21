@@ -187,6 +187,11 @@ export default function Grid() {
   };
   const onDragStop = () => {
     document.body.classList.remove("unyapper-dragging");
+    // Flush after the render → effect → saveGrid chain triggered by the
+    // final onLayoutChange has run, so we send the FINAL layout, not the
+    // one that was pending before this drag. setTimeout(0) queues after
+    // React commits and the save effect fires.
+    window.setTimeout(() => flushPending(), 0);
     if (!movedRef.current) return;
     movedRef.current = false;
     const swallow = (e: MouseEvent) => {
