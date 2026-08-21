@@ -307,7 +307,6 @@ function IssueCard({ item }: { item: RedmineIssue }) {
   const [summary, setSummary] = useState<IssueSummary | null>(null);
   const [sumErr, setSumErr] = useState<string | null>(null);
   const [sumLoading, setSumLoading] = useState(false);
-  const [open, setOpen] = useState(false);
   const fetchedRef = useRef(false);
 
   useEffect(() => {
@@ -365,93 +364,77 @@ function IssueCard({ item }: { item: RedmineIssue }) {
   }, [summary, fetchSummary]);
 
   const subjectColor = item.statusIsClosed ? R.closed : R.link;
+  const summaryText = summary?.headline ?? "";
 
   return (
-    <li
-      className="min-w-0"
-      style={{
-        background: R.body,
-        border: `1px solid ${R.fieldsetBorder}`,
-        padding: "4px 6px 5px",
-      }}
-    >
-      {/* line 1: subject */}
-      <div className="flex items-baseline gap-1.5 min-w-0 text-[11.5px] leading-snug">
-        <span className="shrink-0" style={{ color: R.muted }}>
-          #{item.id}
-        </span>
-        <a
-          href={item.url}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="no-drag hover:underline min-w-0 break-words"
-          draggable={false}
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{
-            color: subjectColor,
-            textDecoration: item.statusIsClosed ? "line-through" : "none",
-            flex: "1 1 auto",
-          }}
-        >
-          {item.subject}
-        </a>
-        {isNew && (
-          <span
-            className="shrink-0 px-1"
-            style={{
-              color: R.new,
-              border: `1px solid ${R.new}55`,
-              background: "#e8f5ea",
-              fontSize: 9,
-              fontWeight: "bold",
-            }}
-          >
-            NEW
-          </span>
-        )}
-      </div>
-
-      {/* line 2: meta */}
-      <div
-        className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5 text-[10px] mt-0.5 min-w-0"
-        style={{ color: R.muted }}
-      >
-        <span>{item.tracker || "Issue"}</span>
-        <span style={{ color: R.faint }}>·</span>
-        <span style={{ color: item.statusIsClosed ? R.faint : R.text }}>
-          {item.status || "—"}
-        </span>
-        {item.priority && (
-          <>
-            <span style={{ color: R.faint }}>·</span>
-            <span>{item.priority}</span>
-          </>
-        )}
-        {item.assignedTo && (
-          <>
-            <span style={{ color: R.faint }}>·</span>
-            <span className="truncate max-w-[10rem]">{item.assignedTo}</span>
-          </>
-        )}
-        <span className="ml-auto shrink-0" style={{ color: R.faint }}>
-          {relativeTime(item.updatedAt)}
-        </span>
-      </div>
-
-      {/* summary block */}
-      <div
-        className="mt-1 px-1.5 py-1 text-[10.5px] leading-snug min-w-0"
+    <li>
+      <a
+        href={item.url}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="no-drag block px-2 py-1.5 min-w-0"
+        draggable={false}
+        onMouseDown={(e) => e.stopPropagation()}
         style={{
-          background: R.summaryBg,
-          border: `1px solid ${R.summaryBorder}`,
+          background: R.body,
+          borderBottom: `1px solid ${R.fieldsetBorder}`,
           color: R.text,
         }}
       >
-        {sumLoading && !summary && (
-          <span style={{ color: R.muted }}>Summarizing…</span>
+        {/* line 1: #id + subject + [NEW] + time */}
+        <div className="flex items-baseline gap-1.5 min-w-0 text-[12px] leading-snug">
+          <span className="shrink-0 mono" style={{ color: R.muted }}>
+            #{item.id}
+          </span>
+          <span
+            className="min-w-0 truncate font-medium flex-1"
+            style={{
+              color: subjectColor,
+              textDecoration: item.statusIsClosed ? "line-through" : "none",
+            }}
+          >
+            {item.subject}
+          </span>
+          {isNew && (
+            <span
+              className="shrink-0 px-1"
+              style={{
+                color: R.new,
+                border: `1px solid ${R.new}55`,
+                fontSize: 9,
+                fontWeight: "bold",
+              }}
+            >
+              NEW
+            </span>
+          )}
+          <span className="shrink-0 mono text-[11px]" style={{ color: R.faint }}>
+            {relativeTime(item.updatedAt)}
+          </span>
+        </div>
+
+        {/* line 2: author */}
+        {item.author && (
+          <div
+            className="text-[11px] mt-0.5 pl-[14px] truncate"
+            style={{ color: R.muted }}
+          >
+            {item.author}
+          </div>
         )}
-        {sumErr && !summary && (
-          <div className="flex items-center gap-1.5 flex-wrap">
+
+        {/* line 3: summary (or its loading/error state) */}
+        {summaryText ? (
+          <div
+            className="text-[11.5px] leading-snug line-clamp-2 mt-0.5 pl-[14px]"
+            style={{ color: R.text }}
+          >
+            {summaryText}
+          </div>
+        ) : sumErr ? (
+          <div
+            className="text-[11px] mt-0.5 pl-[14px] flex items-center gap-1.5 flex-wrap"
+          >
             <span style={{ color: R.danger }} className="break-words">
               {sumErr}
             </span>
@@ -459,6 +442,7 @@ function IssueCard({ item }: { item: RedmineIssue }) {
               className="no-drag hover:underline"
               style={{ color: R.link }}
               onClick={(e) => {
+                e.preventDefault();
                 e.stopPropagation();
                 fetchedRef.current = false;
                 void fetchSummary();
@@ -468,50 +452,15 @@ function IssueCard({ item }: { item: RedmineIssue }) {
               retry
             </button>
           </div>
-        )}
-        {summary && (
-          <>
-            <div className="font-bold break-words">{summary.headline}</div>
-            {summary.statusNote && (
-              <div className="mt-0.5 break-words" style={{ color: R.text }}>
-                <span style={{ color: R.muted }}>Now: </span>
-                {summary.statusNote}
-              </div>
-            )}
-            {summary.bullets.length > 0 && (
-              <>
-                <button
-                  className="no-drag mt-0.5 hover:underline"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setOpen((o) => !o);
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  style={{ color: R.link, fontSize: 10 }}
-                >
-                  {open ? "hide details" : `show ${summary.bullets.length} details`}
-                </button>
-                {open && (
-                  <ul
-                    className="mt-1 pl-3 list-disc space-y-0.5 break-words"
-                    style={{ color: R.text }}
-                  >
-                    {summary.bullets.map((b, i) => (
-                      <li key={i}>{b}</li>
-                    ))}
-                  </ul>
-                )}
-              </>
-            )}
-            {summary.journalCount > 0 && (
-              <div className="mt-0.5" style={{ color: R.faint, fontSize: 9 }}>
-                based on description + {summary.journalCount} note
-                {summary.journalCount === 1 ? "" : "s"}
-              </div>
-            )}
-          </>
-        )}
-      </div>
+        ) : sumLoading ? (
+          <div
+            className="text-[11px] mt-0.5 pl-[14px] italic"
+            style={{ color: R.faint }}
+          >
+            summarizing…
+          </div>
+        ) : null}
+      </a>
     </li>
   );
 }
