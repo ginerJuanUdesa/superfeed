@@ -96,10 +96,18 @@ function extractJSON(text: string): { results?: ClassifyResult[] } {
   return {};
 }
 
+function authHeaders(): Record<string, string> {
+  const key = process.env.LOCAL_LLM_API_KEY?.trim();
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
 async function discoverModel(llmUrl: string): Promise<string | undefined> {
   try {
     const modelsUrl = llmUrl.replace(/\/chat\/completions\/?$/, "/models");
-    const res = await fetch(modelsUrl, { signal: AbortSignal.timeout(5_000) });
+    const res = await fetch(modelsUrl, {
+      headers: authHeaders(),
+      signal: AbortSignal.timeout(5_000),
+    });
     if (!res.ok) return undefined;
     const data = (await res.json()) as { data?: { id?: string }[] };
     return data.data?.[0]?.id;
@@ -124,7 +132,7 @@ export async function POST(req: NextRequest) {
 
     const upstream = await fetch(llmUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...authHeaders() },
       body: JSON.stringify({
         model,
         messages: [

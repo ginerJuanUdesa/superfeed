@@ -212,7 +212,7 @@ export default function SettingsModal({
 
           <Section title="LLM" hint="Pick one: Anthropic key, or a local OpenAI-compatible URL">
             <Field label="Anthropic API key" value={settings.anthropicApiKey} onChange={(v) => set("anthropicApiKey", v)} secret />
-            <Field label="Local LLM URL" value={settings.localLlmUrl} onChange={(v) => set("localLlmUrl", v)} placeholder="http://host:port/v1/chat/completions" />
+            <LlmUrlField value={settings.localLlmUrl} onChange={(v) => set("localLlmUrl", v)} />
             <Field label="Local LLM model" value={settings.localLlmModel} onChange={(v) => set("localLlmModel", v)} placeholder="model name reported by the server" />
           </Section>
 
@@ -539,6 +539,79 @@ function BackupField({
         Importing overwrites the form. Nothing is persisted until you press Save.
       </div>
     </div>
+  );
+}
+
+function LlmUrlField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [status, setStatus] = useState<"idle" | "checking" | "ok" | "down">(
+    value ? "checking" : "idle"
+  );
+
+  useEffect(() => {
+    const url = value.trim();
+    if (!url) {
+      setStatus("idle");
+      return;
+    }
+    setStatus("checking");
+    const ctrl = new AbortController();
+    const t = window.setTimeout(async () => {
+      try {
+        const modelsUrl = url.replace(/\/chat\/completions\/?$/, "/models");
+        const res = await fetch(modelsUrl, {
+          signal: ctrl.signal,
+          cache: "no-store",
+        });
+        setStatus(res.ok ? "ok" : "down");
+      } catch {
+        if (!ctrl.signal.aborted) setStatus("down");
+      }
+    }, 400);
+    return () => {
+      ctrl.abort();
+      window.clearTimeout(t);
+    };
+  }, [value]);
+
+  const dotColor =
+    status === "ok" ? "#22c55e" : status === "checking" ? "#eab308" : "#6b7280";
+  const dotTitle =
+    status === "ok"
+      ? "LLM reachable"
+      : status === "checking"
+      ? "Checking…"
+      : status === "down"
+      ? "LLM unreachable"
+      : "No URL set";
+
+  return (
+    <label className="block">
+      <span className="text-xs text-[var(--text-muted)] block mb-1.5">
+        Local LLM URL
+      </span>
+      <div className="relative">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="http://host:port/v1/chat/completions"
+          className="field-input pr-8"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <span
+          className="absolute right-3 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full"
+          style={{ background: dotColor, boxShadow: `0 0 6px ${dotColor}80` }}
+          title={dotTitle}
+        />
+      </div>
+    </label>
   );
 }
 

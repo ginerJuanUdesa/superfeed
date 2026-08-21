@@ -8,4 +8,4 @@ if [ ! -d node_modules ]; then
   npm install
 fi
 
-exec npx next dev --hostname 0.0.0.0 --port 3000
+exec npx next dev --webpack --hostname 0.0.0.0 --port 3000

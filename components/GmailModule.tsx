@@ -10,6 +10,7 @@ import {
   GmailClassification,
 } from "@/lib/summaryCache";
 import type { GmailItem } from "@/lib/gmail";
+import { useIsDark } from "@/lib/useIsDark";
 
 interface Props {
   module: ModuleInstance;
@@ -20,9 +21,9 @@ interface Props {
 const REFRESH_MS = 5 * 60 * 1000;
 
 /* Gmail's own light-theme palette, quoted verbatim so the module reads as an
- * embedded slice of mail.google.com. Kept theme-independent for the same
- * reason as HFModule — the visual quote IS the point. */
-const G = {
+ * embedded slice of mail.google.com. The dark variant mirrors Gmail's own
+ * dark theme so the visual quote still holds. */
+const G_LIGHT = {
   bg: "#ffffff",
   headerBg: "#f6f8fc",
   border: "#e5e7eb",
@@ -37,11 +38,27 @@ const G = {
   accent: "#1a73e8",
 };
 
-/** Row-status dot palette. Alerts trump unread, unread trumps read. */
+const G_DARK = {
+  bg: "#1f1f1f",
+  headerBg: "#2a2a2a",
+  border: "#3c3c3c",
+  rowHover: "#2b2b2b",
+  rowUnread: "#1f1f1f",
+  text: "#e8eaed",
+  textMuted: "#9aa0a6",
+  textFaint: "#7d8286",
+  alertBg: "#5c1a1a",
+  alertText: "#f28b82",
+  spamText: "#6d7175",
+  accent: "#8ab4f8",
+};
+
+/** Row-status dot palette. Alerts trump unread, unread trumps read.
+ *  Same hues in both themes — Gmail's own dots don't change. */
 const DOT = {
-  alert: "#d93025",   // Gmail red
-  unread: "#188038",  // Gmail green
-  read: "#9aa0a6",    // Gmail grey
+  alert: "#d93025",
+  unread: "#188038",
+  read: "#9aa0a6",
 };
 
 function relativeTime(iso: string): string {
@@ -70,6 +87,7 @@ function relativeTime(iso: string): string {
 const BATCH_SIZE = 6;
 
 export default function GmailModule({ module, onRemove, onUpdateConfig }: Props) {
+  const G = useIsDark() ? G_DARK : G_LIGHT;
   const configuredAccounts = useMemo(() => {
     const s = loadSettings();
     return s.gmailAccounts.map((a) => a.label.trim()).filter(Boolean);
@@ -245,6 +263,18 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
     };
   }, [items, regenTick]);
 
+  // Retry classification periodically. If the LLM was down when items arrived
+  // (or the URL was empty), a bump here re-runs the classify effect. Only
+  // ticks while there are still un-classified items.
+  useEffect(() => {
+    if (!items || items.length === 0) return;
+    const id = window.setInterval(() => {
+      const pending = items.some((it) => !getGmailClassification(it.id));
+      if (pending) setRegenTick((t) => t + 1);
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [items]);
+
   const visibleItems = items;
   const empty = visibleItems && visibleItems.length === 0;
 
@@ -354,6 +384,7 @@ function MailRow({
   classification?: GmailClassification;
   isLast: boolean;
 }) {
+  const G = useIsDark() ? G_DARK : G_LIGHT;
   const isSpam = classification?.isSpam ?? false;
   const isAlert = classification?.isAlert ?? false;
 
@@ -424,10 +455,13 @@ function MailRow({
           </span>
         </div>
         {/* line 2: summary/snippet, indented under the sender column so the
-             dot stays as the row's left anchor */}
+             dot stays as the row's left anchor. Raw snippet renders italic
+             so it's visually distinct from LLM summaries. */}
         {snippetText && (
           <div
-            className="text-[12px] leading-snug line-clamp-2 mt-0.5 pl-[14px]"
+            className={`text-[12px] leading-snug line-clamp-2 mt-0.5 pl-[14px]${
+              summary ? "" : " italic opacity-70"
+            }`}
             style={{ color: snippetColor }}
           >
             {snippetText}
@@ -449,6 +483,7 @@ function BurgerMenu({
   onChange: (next: string[]) => void;
   onRegenerate: () => void;
 }) {
+  const G = useIsDark() ? G_DARK : G_LIGHT;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 

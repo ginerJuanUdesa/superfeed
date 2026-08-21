@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
 import type { RedmineIssue, RedmineProject } from "@/lib/redmine";
+import { useIsDark } from "@/lib/useIsDark";
 
 interface Props {
   module: ModuleInstance;
@@ -14,8 +15,9 @@ interface Props {
 const REFRESH_MS = 5 * 60 * 1000;
 const SUMMARY_CACHE_PREFIX = "redmine-summary:";
 
-/* Classic Redmine palette. */
-const R = {
+/* Classic Redmine palette (light) + a matching dark variant that keeps the
+ * blue banner as the identity anchor and darkens the body / borders. */
+const R_LIGHT = {
   navBg: "#2a2a2a",
   navText: "#f0f0f0",
   navMuted: "#b8b8b8",
@@ -37,6 +39,30 @@ const R = {
   new: "#1a7f2a",
   summaryBg: "#fffde8",
   summaryBorder: "#e8dc8f",
+};
+
+const R_DARK = {
+  navBg: "#1a1a1a",
+  navText: "#f0f0f0",
+  navMuted: "#a8a8a8",
+  bannerBg: "#3d5a78",
+  bannerBgHi: "#4c6f92",
+  bannerText: "#ffffff",
+  bannerSubtle: "#a8bfd6",
+  body: "#1f1f1f",
+  bodyAlt: "#262626",
+  fieldsetBg: "#2a2a2a",
+  fieldsetBorder: "#3c3c3c",
+  legendText: "#b0b0b0",
+  text: "#e6e6e6",
+  muted: "#a0a0a0",
+  faint: "#7a7a7a",
+  link: "#7ab3f0",
+  closed: "#8a8a8a",
+  danger: "#f28b82",
+  new: "#7fc48a",
+  summaryBg: "#3a3416",
+  summaryBorder: "#6b5f24",
 };
 
 const REDMINE_FONT =
@@ -66,6 +92,7 @@ interface IssueSummary {
 }
 
 export default function RedmineModule({ module, onRemove, onUpdateConfig }: Props) {
+  const R = useIsDark() ? R_DARK : R_LIGHT;
   const selectedProjectIds = useMemo(
     () => (module.config.projectIds as number[] | undefined) ?? [],
     [module.config.projectIds]
@@ -345,6 +372,7 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
 }
 
 function IssueCard({ item }: { item: RedmineIssue }) {
+  const R = useIsDark() ? R_DARK : R_LIGHT;
   const isNew = item.flag === "new";
   const cacheKey = `${SUMMARY_CACHE_PREFIX}${item.id}:${item.updatedAt}`;
   const [summary, setSummary] = useState<IssueSummary | null>(null);
@@ -570,6 +598,7 @@ function ProjectMenu({
   onChange: (ids: number[]) => void;
   onRetryProjects: () => void;
 }) {
+  const R = useIsDark() ? R_DARK : R_LIGHT;
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const ref = useRef<HTMLDivElement>(null);
