@@ -6,7 +6,7 @@ import { GearSix, SquaresFour } from "@phosphor-icons/react";
 import Module from "./Module";
 import SettingsModal, { applyThemeMode, loadSettings } from "./SettingsModal";
 import { HFKind, ModuleInstance, ModuleType } from "@/lib/types";
-import { getCachedGrid, hydrate, saveGrid } from "@/lib/clientState";
+import { flushPending, getCachedGrid, hydrate, saveGrid } from "@/lib/clientState";
 
 const ResponsiveGrid = WidthProvider(GridLayout);
 
@@ -143,12 +143,27 @@ export default function Grid() {
 
   useEffect(() => {
     if (!hydrated) return;
-    // Debounce: react-grid-layout fires onLayoutChange on every drag/resize
-    // frame, and JSON.stringify of the full state on each one pegs the main
-    // thread. 300 ms after the last change is plenty for crash-recovery.
-    const id = window.setTimeout(() => saveState({ modules, layout }), 300);
-    return () => window.clearTimeout(id);
+    // saveState → saveGrid already debounces server writes (250 ms) and
+    // coalesces bursts. No extra timer here, so a checkbox tick is one
+    // hop away from being on the wire.
+    saveState({ modules, layout });
   }, [modules, layout, hydrated]);
+
+  // Guarantee: any pending write must land, even if the user closes the
+  // tab (or switches away on mobile) inside the debounce window. Uses
+  // fetch({ keepalive: true }) so the browser delivers the request after
+  // the page is gone.
+  useEffect(() => {
+    if (!hydrated) return;
+    const onLeaving = () => flushPending();
+    const onVis = () => { if (document.visibilityState === "hidden") flushPending(); };
+    window.addEventListener("pagehide", onLeaving);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("pagehide", onLeaving);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [hydrated]);
 
   const removeModule = (id: string) => {
     setModules((prev) => prev.filter((m) => m.id !== id));

@@ -53,22 +53,44 @@ export function getCachedGrid<T = unknown>(): T | undefined {
 let pending: { settings?: unknown; grid?: unknown } = {};
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+function sendPatch(body: { settings?: unknown; grid?: unknown }, opts: { keepalive?: boolean } = {}) {
+  if (!Object.keys(body).length) return;
+  // keepalive lets the request survive tab-close / navigation, which is
+  // what makes save-on-leave reliable.
+  fetch("/api/state", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    keepalive: opts.keepalive,
+  }).catch(() => {
+    // Next successful save will re-send the full grid/settings, so a
+    // single failed PATCH self-heals.
+  });
+}
+
 function scheduleFlush(delayMs: number) {
   if (flushTimer) clearTimeout(flushTimer);
-  flushTimer = setTimeout(async () => {
+  flushTimer = setTimeout(() => {
     const body = pending;
     pending = {};
     flushTimer = null;
-    try {
-      await fetch("/api/state", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch {
-      // ignore: next successful save will bring us back in sync
-    }
+    sendPatch(body);
   }, delayMs);
+}
+
+/**
+ * Fire any pending writes right now, synchronously enqueued as a
+ * keepalive fetch so the browser will deliver it even if the tab is
+ * closing. Call before unload / on visibility hidden.
+ */
+export function flushPending() {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  const body = pending;
+  pending = {};
+  sendPatch(body, { keepalive: true });
 }
 
 export function saveSettings(settings: unknown) {
@@ -81,6 +103,7 @@ export function saveSettings(settings: unknown) {
 export function saveGrid(grid: unknown) {
   cache.grid = grid;
   pending.grid = grid;
-  // Grid layout changes stream from drag/resize — coalesce more aggressively.
-  scheduleFlush(300);
+  // Grid layout streams from drag/resize — coalesce, but short enough that
+  // a checkbox tick + immediate close still lands via flushPending().
+  scheduleFlush(250);
 }
