@@ -5,6 +5,7 @@ import { ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
 import type { CalendarEvent } from "@/lib/calendar";
 import { useIsDark } from "@/lib/useIsDark";
+import { useAutoRefresh } from "@/lib/useAutoRefresh";
 
 interface Props {
   module: ModuleInstance;
@@ -153,19 +154,14 @@ export default function CalendarModule({ module, onRemove, onUpdateConfig }: Pro
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message);
       setItems([]);
+      return false;
     } finally {
       setLoading(false);
     }
   }, [selectedAccounts]);
 
-  useEffect(() => {
-    void load();
-    const id = window.setInterval(() => void load(), REFRESH_MS);
-    return () => {
-      window.clearInterval(id);
-      abortRef.current?.abort();
-    };
-  }, [load]);
+  useAutoRefresh(load, { intervalMs: REFRESH_MS });
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const grouped = useMemo(() => {
     if (!items) return null;

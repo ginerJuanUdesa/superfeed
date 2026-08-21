@@ -11,6 +11,7 @@ import {
 } from "@/lib/summaryCache";
 import type { GmailItem } from "@/lib/gmail";
 import { useIsDark } from "@/lib/useIsDark";
+import { useAutoRefresh } from "@/lib/useAutoRefresh";
 
 interface Props {
   module: ModuleInstance;
@@ -170,19 +171,14 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message);
       setItems([]);
+      return false;
     } finally {
       setLoading(false);
     }
   }, [selectedAccounts]);
 
-  useEffect(() => {
-    void load();
-    const id = window.setInterval(() => void load(), REFRESH_MS);
-    return () => {
-      window.clearInterval(id);
-      abortRef.current?.abort();
-    };
-  }, [load]);
+  useAutoRefresh(load, { intervalMs: REFRESH_MS });
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   useEffect(() => {
     if (!items || items.length === 0) return;

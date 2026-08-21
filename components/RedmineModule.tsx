@@ -5,6 +5,7 @@ import { ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
 import type { RedmineIssue, RedmineProject } from "@/lib/redmine";
 import { useIsDark } from "@/lib/useIsDark";
+import { useAutoRefresh } from "@/lib/useAutoRefresh";
 
 interface Props {
   module: ModuleInstance;
@@ -151,6 +152,7 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message);
       setItems([]);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -161,14 +163,8 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
     void loadProjects();
   }, [loadProjects]);
 
-  useEffect(() => {
-    void load();
-    const id = window.setInterval(() => void load(), REFRESH_MS);
-    return () => {
-      window.clearInterval(id);
-      abortRef.current?.abort();
-    };
-  }, [load]);
+  useAutoRefresh(load, { intervalMs: REFRESH_MS });
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const sortedItems = useMemo(() => {
     if (!items) return null;

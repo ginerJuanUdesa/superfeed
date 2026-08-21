@@ -11,6 +11,7 @@ import { HF_KINDS, HFKind, ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
 import { getSummary, keyFor, setSummary } from "@/lib/summaryCache";
 import type { HFItem } from "@/lib/hf";
+import { useAutoRefresh } from "@/lib/useAutoRefresh";
 
 // Aligned with the HF feed's server cache TTL — polling faster just re-serves cached items.
 const REFRESH_MS = 5 * 60 * 1000;
@@ -133,21 +134,22 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message);
       setItems([]);
+      return false;
     } finally {
       setLoading(false);
     }
   }, [anyKinds]);
 
-  useEffect(() => {
-    // Mount = page reload or module remount → bypass server cache so the user
-    // sees new HF activity, not a 5-min-old snapshot. Polling still uses cache.
-    void load(true);
-    const id = window.setInterval(() => void load(false), REFRESH_MS);
-    return () => {
-      window.clearInterval(id);
-      abortRef.current?.abort();
-    };
+  // First call bypasses the server cache so page reloads see fresh HF
+  // activity; subsequent polls hit the cache to stay cheap.
+  const firstLoadRef = useRef(true);
+  const pollingLoad = useCallback(async () => {
+    const bypass = firstLoadRef.current;
+    firstLoadRef.current = false;
+    return load(bypass);
   }, [load]);
+  useAutoRefresh(pollingLoad, { intervalMs: REFRESH_MS });
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   useEffect(() => {
     if (!items || items.length === 0) return;
