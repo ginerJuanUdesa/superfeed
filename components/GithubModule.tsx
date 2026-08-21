@@ -182,7 +182,7 @@ export default function GithubModule({ module, onRemove }: Props) {
         }}
       >
         <span className="panel-header-tag" style={{ color: GH.text }}>
-          Feed
+          GitHub
         </span>
         <span className="panel-header-meta mono" style={{ color: GH.textFaint }}>
           {items ? String(items.length).padStart(2, "0") : "00"} events
