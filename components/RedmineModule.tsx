@@ -284,15 +284,6 @@ function IssueCard({ item }: { item: RedmineIssue }) {
   const [sumLoading, setSumLoading] = useState(false);
   const fetchedRef = useRef(false);
 
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(cacheKey);
-      if (raw) setSummary(JSON.parse(raw) as IssueSummary);
-    } catch {
-      // ignore
-    }
-  }, [cacheKey]);
-
   const fetchSummary = useCallback(async () => {
     if (fetchedRef.current) return;
     fetchedRef.current = true;
@@ -333,10 +324,22 @@ function IssueCard({ item }: { item: RedmineIssue }) {
     }
   }, [cacheKey, item.id]);
 
+  // Load cache and only fetch on a real miss. Two separate effects (one to
+  // read cache, one to fetch on null-summary) used to race on the first
+  // render: the fetch effect saw summary=null before the cache-read effect
+  // had a chance to set it, and every reload re-called the LLM.
   useEffect(() => {
-    if (summary) return;
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (raw) {
+        setSummary(JSON.parse(raw) as IssueSummary);
+        return;
+      }
+    } catch {
+      // ignore
+    }
     void fetchSummary();
-  }, [summary, fetchSummary]);
+  }, [cacheKey, fetchSummary]);
 
   const subjectColor = item.statusIsClosed ? R.closed : R.link;
   const summaryText = summary?.headline ?? "";
