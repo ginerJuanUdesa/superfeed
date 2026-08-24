@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
 import { useIsDark } from "@/lib/useIsDark";
+import { SETTINGS_CHANGED_EVENT } from "@/lib/clientState";
 import type { FleetProbeResult, FleetServerResult } from "@/lib/fleet";
 
 interface Props {
@@ -42,13 +43,12 @@ const DOT = { up: "#22c55e", down: "#ef4444" };
 
 export default function FleetModule({ module, onRemove }: Props) {
   const F = useIsDark() ? F_DARK : F_LIGHT;
-  const { endpoints, servers } = useMemo(() => {
-    const s = loadSettings();
-    return {
-      endpoints: s.fleetEndpoints ?? [],
-      servers: s.fleetServers ?? [],
-    };
-  }, []);
+  // Read from the settings cache on every render (cheap: an in-memory map).
+  // A settings edit dispatches SETTINGS_CHANGED_EVENT, which triggers a
+  // re-render below and re-probes immediately — no wait for the next tick.
+  const initial = loadSettings();
+  const [endpoints, setEndpoints] = useState(initial.fleetEndpoints ?? []);
+  const [servers, setServers] = useState(initial.fleetServers ?? []);
   const [serviceResults, setServiceResults] = useState<FleetProbeResult[] | null>(null);
   const [serverResults, setServerResults] = useState<FleetServerResult[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -94,6 +94,31 @@ export default function FleetModule({ module, onRemove }: Props) {
   }, [endpoints, servers]);
 
   useAutoRefresh(check, { intervalMs: REFRESH_MS });
+
+  // React to Settings → Save immediately: refresh the local lists and kick
+  // a probe so the module reflects the new endpoints/servers without a
+  // page reload.
+  useEffect(() => {
+    const onChange = () => {
+      const s = loadSettings();
+      setEndpoints(s.fleetEndpoints ?? []);
+      setServers(s.fleetServers ?? []);
+    };
+    window.addEventListener(SETTINGS_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, onChange);
+  }, []);
+
+  // Re-probe when the endpoint/server lists change. Skip the very first
+  // render — useAutoRefresh already fires the initial probe, and we don't
+  // want two racing calls on mount.
+  const initialRef = useRef(true);
+  useEffect(() => {
+    if (initialRef.current) {
+      initialRef.current = false;
+      return;
+    }
+    void check();
+  }, [check]);
 
   const svcUp = serviceResults?.filter((r) => r.reachable).length ?? 0;
   const srvUp = serverResults?.filter((r) => r.up).length ?? 0;

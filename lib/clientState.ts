@@ -93,11 +93,18 @@ export function flushPending() {
   sendPatch(body, { keepalive: true });
 }
 
+/** Event modules subscribe to when they need to react to a settings edit
+ *  without waiting for the next auto-refresh tick. */
+export const SETTINGS_CHANGED_EVENT = "unyapper:settings-changed";
+
 export function saveSettings(settings: unknown) {
   cache.settings = settings;
   pending.settings = settings;
   // Settings changes are user-initiated (Save button) — flush quickly.
   scheduleFlush(50);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SETTINGS_CHANGED_EVENT));
+  }
 }
 
 export function saveGrid(grid: unknown) {
