@@ -20,12 +20,15 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-# Force IPv4 first for DNS. Node 22's undici follows the DNS order verbatim,
-# and public APIs (huggingface.co in particular) return every v6 address
-# before any v4. On hosts whose network has no working IPv6 upstream (Juan's
-# laptop), every outbound fetch would then time out trying v6 before ever
-# reaching v4. This flag flips the resolver so v4 wins.
-ENV NODE_OPTIONS=--dns-result-order=ipv4first
+# Force IPv4 outbound. Two flags are required:
+#   --dns-result-order=ipv4first: return A records before AAAA
+#   --no-network-family-autoselection: disable Happy Eyeballs
+# The first flag alone is not enough because Node 20+ enables Happy Eyeballs
+# by default, which fires SYNs for v4 AND v6 in parallel and takes whichever
+# answers first. On hosts whose network has broken IPv6 upstream (Juan's
+# laptop), the v6 SYN still "wins" the race often enough to make every
+# outbound fetch time out. Both flags together give us pure v4.
+ENV NODE_OPTIONS="--dns-result-order=ipv4first --no-network-family-autoselection"
 
 # Prod deps only — devDependencies are not needed at runtime. Toolchain is
 # needed because `npm ci` here re-runs better-sqlite3's install script; if
