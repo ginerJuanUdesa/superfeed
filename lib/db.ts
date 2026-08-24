@@ -51,6 +51,30 @@ function open(): Database.Database {
       is_alert   INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    -- Persisted HF feed items. Key insight: a single request may drop
+    -- items silently when a per-author sub-fetch fails, so we NEVER let
+    -- an in-memory snapshot decide what the user sees. Every item ever
+    -- discovered stays here (indexed by kind+id) and the module reads
+    -- the union — HF hiccups can no longer make releases "disappear
+    -- between refreshes".
+    CREATE TABLE IF NOT EXISTS hf_items (
+      kind          TEXT NOT NULL,
+      id            TEXT NOT NULL,
+      last_modified INTEGER NOT NULL,
+      is_update     INTEGER NOT NULL,
+      item_json     TEXT NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      PRIMARY KEY (kind, id)
+    );
+    CREATE INDEX IF NOT EXISTS hf_items_last_modified
+      ON hf_items (last_modified DESC);
+    -- Persisted HF follow set. If /following pagination fails halfway,
+    -- we still know which accounts to fan out to on the next sweep.
+    CREATE TABLE IF NOT EXISTS hf_accounts (
+      name       TEXT PRIMARY KEY,
+      avatar_url TEXT,
+      updated_at INTEGER NOT NULL
+    );
   `);
   dbInstance = db;
   migrateLegacyStateFile(db);
@@ -196,4 +220,99 @@ export function upsertGmailClassifications(
 
 export function clearGmailClassifications(): void {
   open().prepare("DELETE FROM gmail_classifications").run();
+}
+
+// --- HF items (persistent feed store) -------------------------------------
+
+export interface HFItemRow {
+  kind: string;
+  id: string;
+  lastModified: number;
+  isUpdate: boolean;
+  itemJson: string;
+}
+
+export function upsertHFItems(
+  rows: { kind: string; id: string; lastModified: number; isUpdate: boolean; itemJson: string }[]
+): void {
+  if (rows.length === 0) return;
+  const stmt = open().prepare(
+    `INSERT INTO hf_items (kind, id, last_modified, is_update, item_json, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(kind, id) DO UPDATE SET
+       last_modified = excluded.last_modified,
+       is_update     = excluded.is_update,
+       item_json     = excluded.item_json,
+       updated_at    = excluded.updated_at`
+  );
+  const now = Date.now();
+  const tx = open().transaction((batch: typeof rows) => {
+    for (const r of batch) {
+      stmt.run(r.kind, r.id, r.lastModified, r.isUpdate ? 1 : 0, r.itemJson, now);
+    }
+  });
+  tx(rows);
+}
+
+/** Return items filtered by kind and (optional) since-cutoff, newest first. */
+export function selectHFItems(opts: {
+  kinds: string[];
+  sinceMs?: number;
+  limit: number;
+}): HFItemRow[] {
+  if (opts.kinds.length === 0) return [];
+  const placeholders = opts.kinds.map(() => "?").join(",");
+  const sinceClause = opts.sinceMs ? "AND last_modified >= ?" : "";
+  const sql = `
+    SELECT kind, id, last_modified AS lastModified, is_update AS isUpdate, item_json AS itemJson
+    FROM hf_items
+    WHERE kind IN (${placeholders}) ${sinceClause}
+    ORDER BY last_modified DESC
+    LIMIT ?
+  `;
+  const params: (string | number)[] = [...opts.kinds];
+  if (opts.sinceMs) params.push(opts.sinceMs);
+  params.push(opts.limit);
+  const rows = open().prepare(sql).all(...params) as {
+    kind: string;
+    id: string;
+    lastModified: number;
+    isUpdate: number;
+    itemJson: string;
+  }[];
+  return rows.map((r) => ({
+    kind: r.kind,
+    id: r.id,
+    lastModified: r.lastModified,
+    isUpdate: !!r.isUpdate,
+    itemJson: r.itemJson,
+  }));
+}
+
+// --- HF accounts (persistent follow set) ---------------------------------
+
+export interface HFAccountRow {
+  name: string;
+  avatarUrl: string | null;
+}
+
+export function upsertHFAccounts(accounts: { name: string; avatarUrl?: string }[]): void {
+  if (accounts.length === 0) return;
+  const stmt = open().prepare(
+    `INSERT INTO hf_accounts (name, avatar_url, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET
+       avatar_url = COALESCE(excluded.avatar_url, hf_accounts.avatar_url),
+       updated_at = excluded.updated_at`
+  );
+  const now = Date.now();
+  const tx = open().transaction((batch: typeof accounts) => {
+    for (const a of batch) stmt.run(a.name, a.avatarUrl ?? null, now);
+  });
+  tx(accounts);
+}
+
+export function selectHFAccounts(): HFAccountRow[] {
+  return open()
+    .prepare("SELECT name, avatar_url AS avatarUrl FROM hf_accounts")
+    .all() as HFAccountRow[];
 }

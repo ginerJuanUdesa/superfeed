@@ -1,3 +1,10 @@
+import {
+  selectHFItems,
+  upsertHFItems,
+  selectHFAccounts,
+  upsertHFAccounts,
+} from "./db";
+
 export type HFKind = "model" | "dataset" | "space" | "paper";
 
 const KIND_TO_API: Record<Exclude<HFKind, "paper">, string> = {
@@ -157,9 +164,10 @@ export async function fetchFollowing(user: string, token?: string): Promise<HFAc
       avatarUrl: r.avatarUrl?.startsWith("/") ? `${HF_BASE}${r.avatarUrl}` : r.avatarUrl,
     });
   }
-  const accounts = [...merged.values()];
-  if (!accounts.length) throw new Error(`HF: no follows found for "${user}"`);
-  return accounts;
+  // Don't throw when this comes back empty — the caller UNIONs with the
+  // persisted follow set, so a transient HF blip on the follow endpoints
+  // shouldn't leave us with zero authors and drop the whole feed.
+  return [...merged.values()];
 }
 
 async function fetchAuthorItems(
@@ -298,7 +306,9 @@ async function pool<T>(tasks: (() => Promise<T>)[], concurrency: number): Promis
 }
 
 const FEED_TTL_MS = 5 * 60 * 1000;
-const feedCache = new Map<string, { at: number; items: HFItem[] }>();
+/** Per-cacheKey timestamp of the last HF sweep that ran. In-memory is fine
+ *  because on restart we just re-sweep; the durable state is the DB. */
+const lastSweepAt = new Map<string, number>();
 
 export async function fetchFeed(opts: {
   user: string;
@@ -307,40 +317,58 @@ export async function fetchFeed(opts: {
   perAuthorLimit?: number;
   token?: string;
   maxItems?: number;
-  /** Skip the in-memory cache entirely — used on page reload so the user
-   * sees fresh data instead of stale items served from the 5-min TTL. */
+  /** Force a sweep now, even if the last one was recent. */
   fresh?: boolean;
 }): Promise<HFItem[]> {
-  const { user, kinds, since, perAuthorLimit = 30, token, maxItems = 80, fresh } = opts;
+  const { user, kinds, since, maxItems = 80, fresh } = opts;
+  const sinceMs = since ? Date.parse(since) : 0;
 
-  // v11: skip HF's auto "initial commit" scaffold when finding first burst.
-  const cacheKey = `v11|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
-  const cached = feedCache.get(cacheKey);
-  if (!fresh && cached && Date.now() - cached.at < FEED_TTL_MS) return cached.items;
-
-  // Serve-stale wrapper: if the actual work throws (HF hiccup, network blip),
-  // we'd rather return the last-known items than surface a "fetch failed" to
-  // the user. Only re-throw when we have NOTHING cached.
-  try {
-    return await fetchFeedInner(opts, cacheKey);
-  } catch (err) {
-    if (cached) return cached.items;
-    throw err;
+  // Sweep is rate-limited per (user, kinds, since): we'd rather serve a
+  // second-old DB read than hammer HF on every focus/blur refresh. `fresh`
+  // (from an explicit page reload) bypasses the limiter.
+  const key = `v12|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
+  const shouldSweep = fresh || Date.now() - (lastSweepAt.get(key) ?? 0) >= FEED_TTL_MS;
+  if (shouldSweep) {
+    try {
+      await runSweep(opts);
+    } catch {
+      // The sweep is best-effort — even if HF is totally down, we can still
+      // return whatever is already in the DB below.
+    }
+    lastSweepAt.set(key, Date.now());
   }
+
+  // Response ALWAYS comes from the DB — a single sweep never decides what
+  // the user sees. Anything ever discovered stays available across refreshes.
+  const rows = selectHFItems({
+    kinds,
+    sinceMs: sinceMs || undefined,
+    limit: maxItems,
+  });
+  return rows.map((r) => JSON.parse(r.itemJson) as HFItem);
 }
 
-async function fetchFeedInner(
-  opts: Parameters<typeof fetchFeed>[0],
-  cacheKey: string
-): Promise<HFItem[]> {
+async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
   const { user, kinds, since, perAuthorLimit = 30, token, maxItems = 80 } = opts;
 
+  // Author set = whatever HF returns now UNION with what we've persisted
+  // before. That way one flaky /following response can't leave the sweep
+  // with zero authors.
   const following = await fetchFollowing(user, token);
-  // name -> avatar, which also dedupes accounts returned by both endpoints
   const avatars = new Map<string, string | undefined>();
   for (const a of following) if (!avatars.has(a.name)) avatars.set(a.name, a.avatarUrl);
+  for (const persisted of selectHFAccounts()) {
+    if (!avatars.has(persisted.name)) {
+      avatars.set(persisted.name, persisted.avatarUrl ?? undefined);
+    }
+  }
   const authors = [...avatars.keys()];
-  if (!authors.length) return [];
+  if (!authors.length) return;
+
+  // Persist the merged follow set so the next sweep survives an /following outage.
+  upsertHFAccounts(
+    [...avatars.entries()].map(([name, avatarUrl]) => ({ name, avatarUrl }))
+  );
 
   const tasks: (() => Promise<HFItem[]>)[] = [];
   for (const author of authors) {
@@ -480,6 +508,16 @@ async function fetchFeedInner(
     }
   });
 
-  feedCache.set(cacheKey, { at: Date.now(), items });
-  return items;
+  // Persist everything we successfully classified. `upsertHFItems` merges
+  // by (kind, id): if this sweep failed to fetch author X, X's items simply
+  // don't appear in `items` and their existing DB rows are untouched.
+  upsertHFItems(
+    items.map((it) => ({
+      kind: it.kind,
+      id: it.id,
+      lastModified: Date.parse(it.lastModified) || 0,
+      isUpdate: !!it.isUpdate,
+      itemJson: JSON.stringify(it),
+    }))
+  );
 }
