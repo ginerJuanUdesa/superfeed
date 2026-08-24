@@ -39,7 +39,13 @@ const F_DARK = {
   accent: "#60a5fa",
 };
 
-const DOT = { up: "#22c55e", down: "#ef4444" };
+/** Three colors:
+ *  green  = up
+ *  red    = down — host answered but the specific service isn't accepting
+ *           (the machine is alive; something is wrong with THIS service)
+ *  yellow = unreachable — nothing answered at all (network path is broken,
+ *           or the host is off — we can't tell from here) */
+const DOT = { up: "#22c55e", down: "#ef4444", unreachable: "#eab308" };
 
 export default function FleetModule({ module, onRemove }: Props) {
   const F = useIsDark() ? F_DARK : F_LIGHT;
@@ -120,7 +126,7 @@ export default function FleetModule({ module, onRemove }: Props) {
     void check();
   }, [check]);
 
-  const svcUp = serviceResults?.filter((r) => r.reachable).length ?? 0;
+  const svcUp = serviceResults?.filter((r) => r.status === "up").length ?? 0;
   const srvUp = serverResults?.filter((r) => r.up).length ?? 0;
   const totalUp = svcUp + srvUp;
   const total = (serviceResults?.length ?? 0) + (serverResults?.length ?? 0);
@@ -274,12 +280,16 @@ function ServerRow({
   isLast: boolean;
   F: typeof F_LIGHT;
 }) {
-  const dot = result.up ? DOT.up : DOT.down;
+  // For a whole-server probe there's no "down" state — if the box responds
+  // on ANY common port it's up, if nothing answers it's unreachable (yellow,
+  // not red, because we can't distinguish "host is off" from "network path
+  // is broken" from here).
+  const dot = result.up ? DOT.up : DOT.unreachable;
   const title = result.up
     ? result.openPorts.length > 0
       ? `up — ports open: ${result.openPorts.join(", ")}`
       : "up — host answered but every probed port is closed"
-    : "unreachable on every probed port (timeout)";
+    : "unreachable — no probed port answered before timeout";
   return (
     <li
       className="flex items-center gap-2 px-3 py-1.5 min-w-0"
@@ -306,12 +316,12 @@ function ServerRow({
       <span
         className="text-[12px] mono shrink-0 tabular-nums"
         style={{
-          color: result.up ? F.textMuted : DOT.down,
-          minWidth: 52,
+          color: result.up ? F.textMuted : DOT.unreachable,
+          minWidth: 84,
           textAlign: "right",
         }}
       >
-        {result.up ? `${result.latencyMs}ms` : "down"}
+        {result.up ? `${result.latencyMs}ms` : "unreachable"}
       </span>
     </li>
   );
@@ -326,10 +336,32 @@ function EndpointRow({
   isLast: boolean;
   F: typeof F_LIGHT;
 }) {
-  const dot = result.reachable ? DOT.up : DOT.down;
-  const title = result.reachable
-    ? `reachable in ${result.latencyMs}ms`
-    : `unreachable${result.error ? ` — ${result.error}` : ""}`;
+  const dot =
+    result.status === "up"
+      ? DOT.up
+      : result.status === "down"
+      ? DOT.down
+      : DOT.unreachable;
+  const label =
+    result.status === "up"
+      ? `${result.latencyMs}ms`
+      : result.status === "down"
+      ? "down"
+      : "unreachable";
+  const rightColor =
+    result.status === "up"
+      ? F.textMuted
+      : result.status === "down"
+      ? DOT.down
+      : DOT.unreachable;
+  const title =
+    result.status === "up"
+      ? `reachable in ${result.latencyMs}ms`
+      : result.status === "down"
+      ? `host answered but port ${result.port} is closed${
+          result.error ? ` — ${result.error}` : ""
+        }`
+      : `no answer${result.error ? ` — ${result.error}` : ""}`;
   return (
     <li
       className="flex items-center gap-2 px-3 py-1.5 min-w-0"
@@ -355,13 +387,9 @@ function EndpointRow({
       </span>
       <span
         className="text-[12px] mono shrink-0 tabular-nums"
-        style={{
-          color: result.reachable ? F.textMuted : DOT.down,
-          minWidth: 52,
-          textAlign: "right",
-        }}
+        style={{ color: rightColor, minWidth: 84, textAlign: "right" }}
       >
-        {result.reachable ? `${result.latencyMs}ms` : "down"}
+        {label}
       </span>
     </li>
   );

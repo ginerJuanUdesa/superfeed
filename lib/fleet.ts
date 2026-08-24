@@ -16,11 +16,20 @@ export interface FleetServer {
   host: string;
 }
 
+/** Three-way status for a service probe:
+ *  - "up"          → the port accepted our TCP connection.
+ *  - "down"        → the host answered (ECONNREFUSED / ECONNRESET) but the
+ *                    port is closed. The machine is alive; the service isn't.
+ *  - "unreachable" → nothing answered before the timeout. Could be the box
+ *                    being off, a broken route, DNS, or a firewall dropping
+ *                    packets — we can't tell the difference from here. */
+export type FleetProbeStatus = "up" | "down" | "unreachable";
+
 export interface FleetProbeResult {
   label: string;
   host: string;
   port: number;
-  reachable: boolean;
+  status: FleetProbeStatus;
   latencyMs: number | null;
   error?: string;
   /** Server-side wall-clock at which the probe finished (ISO 8601). */
@@ -109,13 +118,18 @@ function rawTcpProbe(host: string, port: number): Promise<RawProbe> {
 
 export async function probeEndpoint(ep: FleetEndpoint): Promise<FleetProbeResult> {
   const r = await rawTcpProbe(ep.host, ep.port);
+  const status: FleetProbeStatus = r.accepted
+    ? "up"
+    : r.answered
+    ? "down"
+    : "unreachable";
   return {
     label: ep.label,
     host: ep.host,
     port: ep.port,
-    reachable: r.accepted,
+    status,
     latencyMs: r.accepted ? r.latencyMs : null,
-    error: r.accepted ? undefined : r.error,
+    error: status === "up" ? undefined : r.error,
     checkedAt: new Date().toISOString(),
   };
 }
