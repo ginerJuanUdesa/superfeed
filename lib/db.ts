@@ -17,6 +17,15 @@ const DB_FILE = path.join(STATE_DIR, "unyapper.db");
 const LEGACY_STATE_FILE = path.join(STATE_DIR, "state.json");
 const LEGACY_SETTINGS_FILE = path.join(STATE_DIR, "settings.json");
 
+/**
+ * Bump when the HF summarize prompt or input shape changes so previously-
+ * generated summaries would look wrong under the new logic. On mismatch we
+ * wipe `hf_summaries` — every card re-summarizes with the new prompt.
+ * Gmail classifications are unaffected; they have their own concerns.
+ */
+const HF_SUMMARY_LOGIC_VERSION = 2;
+const HF_SUMMARY_VERSION_KEY = "hf_summary_logic_version";
+
 let dbInstance: Database.Database | null = null;
 
 function open(): Database.Database {
@@ -45,7 +54,23 @@ function open(): Database.Database {
   `);
   dbInstance = db;
   migrateLegacyStateFile(db);
+  invalidateHFSummariesIfStale(db);
   return db;
+}
+
+/** If the stored summary logic version doesn't match the current one, blow
+ *  away every cached HF summary and record the new version. */
+function invalidateHFSummariesIfStale(db: Database.Database) {
+  const row = db
+    .prepare("SELECT value FROM kv_state WHERE key = ?")
+    .get(HF_SUMMARY_VERSION_KEY) as { value: string } | undefined;
+  const current = row ? Number(JSON.parse(row.value)) : null;
+  if (current === HF_SUMMARY_LOGIC_VERSION) return;
+  db.prepare("DELETE FROM hf_summaries").run();
+  db.prepare(
+    `INSERT INTO kv_state (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(HF_SUMMARY_VERSION_KEY, JSON.stringify(HF_SUMMARY_LOGIC_VERSION));
 }
 
 /** One-shot import of `.local/state.json` (or the older `settings.json`) into

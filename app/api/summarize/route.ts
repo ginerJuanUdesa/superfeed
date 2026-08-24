@@ -6,11 +6,12 @@ export const dynamic = "force-dynamic";
 
 const SYSTEM = `You are a concise technical editor. Given metadata about a HuggingFace release, output STRICT JSON with one field:
 {
-  "summary": "<one short English sentence>"
+  "summary": "<one short English fragment>"
 }
 Rules:
-- summary: one sentence, max 22 words, factual, plain English. Examples: "8B parameter chat model finetuned on multilingual data", "4-bit quant of a SoTA math LLM", "image-to-video diffusion model with camera control".
-- If the input says this is an UPDATE (not a new release), lead with what changed, e.g. "README rewritten with new benchmarks" or "added GGUF quants for the 8B variant". Use the commit title as the primary signal.
+- summary: one short fragment describing WHAT IT DOES, max 14 words. The UI already shows the author/name above the summary, so DO NOT repeat the model name, author name, or the word "model"/"dataset"/"space" unless it is essential. Just describe the function. Good: "8B chat finetune trained on multilingual data", "4-bit quant of a SoTA math LLM", "image-to-video diffusion with camera control", "curated 40k Spanish RAG eval set". Bad: "Foo-Bar-8B is an 8B parameter chat model finetuned on…" (repeats name), "This model is a…" (filler).
+- Start with the substantive detail, not with "a", "the", "this is", or the name.
+- If the input says this is an UPDATE (not a new release), lead with what changed, e.g. "README rewritten with new benchmarks" or "added GGUF quants for the 8B variant". Use the commit title as the primary signal. Still do not repeat the repo name.
 - Do not include any other text, markdown, or code fences. JSON only.`;
 
 interface SummarizeBody {
