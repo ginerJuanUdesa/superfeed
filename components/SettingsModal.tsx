@@ -225,7 +225,7 @@ export default function SettingsModal({
 
           <Section
             title="Fleet"
-            hint="Servers = whole machines (probed on common ports to see if they're on). Services = specific host:port checks."
+            hint="Servers = whole machines (probed on common ports to see if they're on). Services = specific host:port checks. A service's host can be a server label — no need to retype the IP."
           >
             <FleetServersField
               servers={settings.fleetServers}
@@ -747,7 +747,7 @@ function FleetEndpointsField({
           <input
             value={e.host}
             onChange={(ev) => update(i, { host: ev.target.value })}
-            placeholder="host or ip"
+            placeholder="host, ip, or server label"
             className="field-input min-w-0"
             autoComplete="off"
             spellCheck={false}
