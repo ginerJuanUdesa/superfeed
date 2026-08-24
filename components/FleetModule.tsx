@@ -5,7 +5,7 @@ import { ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
 import { useIsDark } from "@/lib/useIsDark";
-import type { FleetProbeResult } from "@/lib/fleet";
+import type { FleetProbeResult, FleetServerResult } from "@/lib/fleet";
 
 interface Props {
   module: ModuleInstance;
@@ -21,7 +21,7 @@ const F_LIGHT = {
   bg: "#ffffff",
   headerBg: "#f6f7f9",
   border: "#e5e7eb",
-  rowHover: "#f2f4f8",
+  sectionBg: "#f9fafb",
   text: "#111827",
   textMuted: "#6b7280",
   textFaint: "#9ca3af",
@@ -31,26 +31,34 @@ const F_DARK = {
   bg: "#0f1115",
   headerBg: "#151821",
   border: "#232733",
-  rowHover: "#1a1e29",
+  sectionBg: "#12151d",
   text: "#e4e7ee",
   textMuted: "#9aa4b8",
   textFaint: "#6b7385",
   accent: "#60a5fa",
 };
 
-const DOT = { up: "#22c55e", down: "#ef4444", unknown: "#9ca3af" };
+const DOT = { up: "#22c55e", down: "#ef4444" };
 
 export default function FleetModule({ module, onRemove }: Props) {
   const F = useIsDark() ? F_DARK : F_LIGHT;
-  const endpoints = useMemo(() => loadSettings().fleetEndpoints ?? [], []);
-  const [results, setResults] = useState<FleetProbeResult[] | null>(null);
+  const { endpoints, servers } = useMemo(() => {
+    const s = loadSettings();
+    return {
+      endpoints: s.fleetEndpoints ?? [],
+      servers: s.fleetServers ?? [],
+    };
+  }, []);
+  const [serviceResults, setServiceResults] = useState<FleetProbeResult[] | null>(null);
+  const [serverResults, setServerResults] = useState<FleetServerResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const check = useCallback(async () => {
-    if (endpoints.length === 0) {
-      setResults([]);
+    if (endpoints.length === 0 && servers.length === 0) {
+      setServiceResults([]);
+      setServerResults([]);
       setError(null);
       return;
     }
@@ -63,15 +71,19 @@ export default function FleetModule({ module, onRemove }: Props) {
       const res = await fetch("/api/fleet/check", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ endpoints }),
+        body: JSON.stringify({ endpoints, servers }),
         signal: ctrl.signal,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      const data = (await res.json()) as { results: FleetProbeResult[] };
-      setResults(data.results);
+      const data = (await res.json()) as {
+        results: FleetProbeResult[];
+        servers: FleetServerResult[];
+      };
+      setServiceResults(data.results);
+      setServerResults(data.servers);
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message);
@@ -79,11 +91,15 @@ export default function FleetModule({ module, onRemove }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [endpoints]);
+  }, [endpoints, servers]);
 
   useAutoRefresh(check, { intervalMs: REFRESH_MS });
 
-  const upCount = results?.filter((r) => r.reachable).length ?? 0;
+  const svcUp = serviceResults?.filter((r) => r.reachable).length ?? 0;
+  const srvUp = serverResults?.filter((r) => r.up).length ?? 0;
+  const totalUp = svcUp + srvUp;
+  const total = (serviceResults?.length ?? 0) + (serverResults?.length ?? 0);
+  const empty = endpoints.length === 0 && servers.length === 0;
 
   return (
     <div
@@ -102,7 +118,7 @@ export default function FleetModule({ module, onRemove }: Props) {
           Fleet
         </span>
         <span className="panel-header-meta mono" style={{ color: F.textFaint }}>
-          {results ? `${upCount}/${results.length} up` : "checking…"}
+          {total > 0 ? `${totalUp}/${total} up` : empty ? "no targets" : "checking…"}
         </span>
         {loading && (
           <span
@@ -127,25 +143,43 @@ export default function FleetModule({ module, onRemove }: Props) {
             {error}
           </div>
         )}
-        {endpoints.length === 0 && !error && (
+        {empty && !error && (
           <div
             className="absolute inset-x-3 top-3 text-center text-xs"
             style={{ color: F.textFaint }}
           >
-            No endpoints configured. Open Settings → Fleet.
+            No servers or services configured. Open Settings → Fleet.
           </div>
         )}
-        {results && results.length > 0 && (
-          <ul>
-            {results.map((r, i) => (
-              <EndpointRow
-                key={`${r.label}-${r.host}-${r.port}`}
-                result={r}
-                isLast={i === results.length - 1}
-                F={F}
-              />
-            ))}
-          </ul>
+
+        {serverResults && serverResults.length > 0 && (
+          <Section title="Servers" F={F}>
+            <ul>
+              {serverResults.map((r, i) => (
+                <ServerRow
+                  key={`${r.label}-${r.host}`}
+                  result={r}
+                  isLast={i === serverResults.length - 1}
+                  F={F}
+                />
+              ))}
+            </ul>
+          </Section>
+        )}
+
+        {serviceResults && serviceResults.length > 0 && (
+          <Section title="Services" F={F}>
+            <ul>
+              {serviceResults.map((r, i) => (
+                <EndpointRow
+                  key={`${r.label}-${r.host}-${r.port}`}
+                  result={r}
+                  isLast={i === serviceResults.length - 1}
+                  F={F}
+                />
+              ))}
+            </ul>
+          </Section>
         )}
       </div>
 
@@ -176,6 +210,85 @@ export default function FleetModule({ module, onRemove }: Props) {
         </button>
       </div>
     </div>
+  );
+}
+
+function Section({
+  title,
+  F,
+  children,
+}: {
+  title: string;
+  F: typeof F_LIGHT;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div
+        className="px-3 py-1 text-[10px] uppercase tracking-wider font-medium"
+        style={{
+          color: F.textFaint,
+          background: F.sectionBg,
+          borderTop: `1px solid ${F.border}`,
+          borderBottom: `1px solid ${F.border}`,
+        }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ServerRow({
+  result,
+  isLast,
+  F,
+}: {
+  result: FleetServerResult;
+  isLast: boolean;
+  F: typeof F_LIGHT;
+}) {
+  const dot = result.up ? DOT.up : DOT.down;
+  const title = result.up
+    ? result.openPorts.length > 0
+      ? `up — ports open: ${result.openPorts.join(", ")}`
+      : "up — host answered but every probed port is closed"
+    : "unreachable on every probed port (timeout)";
+  return (
+    <li
+      className="flex items-center gap-2 px-3 py-1.5 min-w-0"
+      style={{
+        borderBottom: isLast ? "none" : `1px solid ${F.border}`,
+        color: F.text,
+      }}
+    >
+      <span
+        className="w-1.5 h-1.5 rounded-full shrink-0"
+        style={{ background: dot }}
+        title={title}
+      />
+      <span className="text-[13px] font-semibold truncate flex-1" style={{ color: F.text }}>
+        {result.label}
+      </span>
+      <span
+        className="text-[12px] mono truncate shrink-0"
+        style={{ color: F.textMuted, maxWidth: "45%" }}
+        title={result.host}
+      >
+        {result.host}
+      </span>
+      <span
+        className="text-[12px] mono shrink-0 tabular-nums"
+        style={{
+          color: result.up ? F.textMuted : DOT.down,
+          minWidth: 52,
+          textAlign: "right",
+        }}
+      >
+        {result.up ? `${result.latencyMs}ms` : "down"}
+      </span>
+    </li>
   );
 }
 
@@ -217,7 +330,11 @@ function EndpointRow({
       </span>
       <span
         className="text-[12px] mono shrink-0 tabular-nums"
-        style={{ color: result.reachable ? F.textMuted : DOT.down, minWidth: 52, textAlign: "right" }}
+        style={{
+          color: result.reachable ? F.textMuted : DOT.down,
+          minWidth: 52,
+          textAlign: "right",
+        }}
       >
         {result.reachable ? `${result.latencyMs}ms` : "down"}
       </span>

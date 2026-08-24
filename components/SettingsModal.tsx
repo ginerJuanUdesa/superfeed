@@ -5,7 +5,7 @@ import {
   getCachedSettings,
   saveSettings as pushSettings,
 } from "@/lib/clientState";
-import type { FleetEndpoint } from "@/lib/fleet";
+import type { FleetEndpoint, FleetServer } from "@/lib/fleet";
 
 export interface GmailAccount {
   label: string;
@@ -33,6 +33,7 @@ export interface Settings {
   localLlmUrl: string;
   localLlmModel: string;
   fleetEndpoints: FleetEndpoint[];
+  fleetServers: FleetServer[];
 }
 
 const EMPTY: Settings = {
@@ -47,6 +48,7 @@ const EMPTY: Settings = {
   localLlmUrl: "",
   localLlmModel: "",
   fleetEndpoints: [],
+  fleetServers: [],
 };
 
 function todayISO() {
@@ -85,6 +87,7 @@ export function loadSettings(): Settings {
   }));
   parsed.themeMode ??= "system";
   parsed.fleetEndpoints ??= [];
+  parsed.fleetServers ??= [];
   return parsed;
 }
 
@@ -220,7 +223,14 @@ export default function SettingsModal({
             <Field label="Local LLM model" value={settings.localLlmModel} onChange={(v) => set("localLlmModel", v)} placeholder="model name reported by the server" />
           </Section>
 
-          <Section title="Fleet" hint="Machines to probe (TCP connect). Port defaults to 22.">
+          <Section
+            title="Fleet"
+            hint="Servers = whole machines (probed on common ports to see if they're on). Services = specific host:port checks."
+          >
+            <FleetServersField
+              servers={settings.fleetServers}
+              onChange={(v) => set("fleetServers", v)}
+            />
             <FleetEndpointsField
               endpoints={settings.fleetEndpoints}
               onChange={(v) => set("fleetEndpoints", v)}
@@ -497,6 +507,7 @@ function parseImported(raw: string): Settings {
   }));
   base.themeMode ??= "system";
   base.fleetEndpoints ??= [];
+  base.fleetServers ??= [];
   return base;
 }
 
@@ -627,6 +638,65 @@ function LlmUrlField({
   );
 }
 
+function FleetServersField({
+  servers,
+  onChange,
+}: {
+  servers: FleetServer[];
+  onChange: (v: FleetServer[]) => void;
+}) {
+  const update = (idx: number, patch: Partial<FleetServer>) => {
+    onChange(servers.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  };
+  const remove = (idx: number) => onChange(servers.filter((_, i) => i !== idx));
+  const add = () => onChange([...servers, { label: "", host: "" }]);
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-[var(--text-muted)]">Servers (whole machines)</div>
+      {servers.length === 0 && (
+        <div className="text-xs text-[var(--text-faint)] italic">
+          No servers yet. Add one below.
+        </div>
+      )}
+      {servers.map((s, i) => (
+        <div
+          key={i}
+          className="flex gap-2 p-2 rounded-md"
+          style={{ background: "var(--surface-hi)", border: "1px solid var(--border)" }}
+        >
+          <input
+            value={s.label}
+            onChange={(ev) => update(i, { label: ev.target.value })}
+            placeholder="label"
+            className="field-input flex-[2]"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <input
+            value={s.host}
+            onChange={(ev) => update(i, { host: ev.target.value })}
+            placeholder="host or ip"
+            className="field-input flex-[3]"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <button
+            type="button"
+            onClick={() => remove(i)}
+            className="text-[var(--text-muted)] hover:text-[var(--danger)] text-lg leading-none w-8 h-8 flex items-center justify-center rounded-md hover:bg-[var(--surface-max)] transition-colors shrink-0"
+            title="Remove server"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button type="button" onClick={add} className="btn btn-ghost h-8 text-xs">
+        Add server
+      </button>
+    </div>
+  );
+}
+
 function FleetEndpointsField({
   endpoints,
   onChange,
@@ -639,10 +709,10 @@ function FleetEndpointsField({
   };
   const remove = (idx: number) => onChange(endpoints.filter((_, i) => i !== idx));
   const add = () =>
-    onChange([...endpoints, { label: "", host: "", port: undefined }]);
+    onChange([...endpoints, { label: "", host: "", port: 80 }]);
   return (
-    <div className="space-y-2">
-      <div className="text-xs text-[var(--text-muted)]">Endpoints</div>
+    <div className="space-y-2 pt-3 mt-3 border-t border-[var(--border)]">
+      <div className="text-xs text-[var(--text-muted)]">Services (host:port)</div>
       {endpoints.length === 0 && (
         <div className="text-xs text-[var(--text-faint)] italic">
           No endpoints yet. Add one below.
@@ -671,12 +741,11 @@ function FleetEndpointsField({
             spellCheck={false}
           />
           <input
-            value={e.port ?? ""}
+            value={e.port || ""}
             onChange={(ev) => {
-              const raw = ev.target.value.trim();
-              const parsed = raw ? Number(raw) : undefined;
+              const parsed = Number(ev.target.value.trim());
               update(i, {
-                port: parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined,
+                port: Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0,
               });
             }}
             placeholder="port"
