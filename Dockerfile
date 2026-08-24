@@ -20,6 +20,12 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+# Force IPv4 first for DNS. Node 22's undici follows the DNS order verbatim,
+# and public APIs (huggingface.co in particular) return every v6 address
+# before any v4. On hosts whose network has no working IPv6 upstream (Juan's
+# laptop), every outbound fetch would then time out trying v6 before ever
+# reaching v4. This flag flips the resolver so v4 wins.
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
 
 # Prod deps only — devDependencies are not needed at runtime. Toolchain is
 # needed because `npm ci` here re-runs better-sqlite3's install script; if
