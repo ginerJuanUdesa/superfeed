@@ -1,4 +1,4 @@
-export type ModuleType = "gmail" | "hf" | "calendar" | "github" | "redmine";
+export type ModuleType = "gmail" | "hf" | "calendar" | "github" | "redmine" | "fleet";
 
 export type HFKind = "model" | "dataset" | "space" | "paper";
 

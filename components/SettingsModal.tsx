@@ -5,6 +5,7 @@ import {
   getCachedSettings,
   saveSettings as pushSettings,
 } from "@/lib/clientState";
+import type { FleetEndpoint } from "@/lib/fleet";
 
 export interface GmailAccount {
   label: string;
@@ -31,6 +32,7 @@ export interface Settings {
   anthropicApiKey: string;
   localLlmUrl: string;
   localLlmModel: string;
+  fleetEndpoints: FleetEndpoint[];
 }
 
 const EMPTY: Settings = {
@@ -44,6 +46,7 @@ const EMPTY: Settings = {
   anthropicApiKey: "",
   localLlmUrl: "",
   localLlmModel: "",
+  fleetEndpoints: [],
 };
 
 function todayISO() {
@@ -81,6 +84,7 @@ export function loadSettings(): Settings {
     clientSecret: a.clientSecret || sharedSecret || "",
   }));
   parsed.themeMode ??= "system";
+  parsed.fleetEndpoints ??= [];
   return parsed;
 }
 
@@ -214,6 +218,13 @@ export default function SettingsModal({
             <Field label="Anthropic API key" value={settings.anthropicApiKey} onChange={(v) => set("anthropicApiKey", v)} secret />
             <LlmUrlField value={settings.localLlmUrl} onChange={(v) => set("localLlmUrl", v)} />
             <Field label="Local LLM model" value={settings.localLlmModel} onChange={(v) => set("localLlmModel", v)} placeholder="model name reported by the server" />
+          </Section>
+
+          <Section title="Fleet" hint="Machines to probe (TCP connect). Port defaults to 22.">
+            <FleetEndpointsField
+              endpoints={settings.fleetEndpoints}
+              onChange={(v) => set("fleetEndpoints", v)}
+            />
           </Section>
 
           <Section title="Backup" hint="Export or import all settings as JSON. Includes secrets — don't share the file.">
@@ -485,6 +496,7 @@ function parseImported(raw: string): Settings {
     clientSecret: a.clientSecret || sharedSecret || "",
   }));
   base.themeMode ??= "system";
+  base.fleetEndpoints ??= [];
   return base;
 }
 
@@ -612,6 +624,81 @@ function LlmUrlField({
         />
       </div>
     </label>
+  );
+}
+
+function FleetEndpointsField({
+  endpoints,
+  onChange,
+}: {
+  endpoints: FleetEndpoint[];
+  onChange: (v: FleetEndpoint[]) => void;
+}) {
+  const update = (idx: number, patch: Partial<FleetEndpoint>) => {
+    onChange(endpoints.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
+  };
+  const remove = (idx: number) => onChange(endpoints.filter((_, i) => i !== idx));
+  const add = () =>
+    onChange([...endpoints, { label: "", host: "", port: undefined }]);
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-[var(--text-muted)]">Endpoints</div>
+      {endpoints.length === 0 && (
+        <div className="text-xs text-[var(--text-faint)] italic">
+          No endpoints yet. Add one below.
+        </div>
+      )}
+      {endpoints.map((e, i) => (
+        <div
+          key={i}
+          className="flex gap-2 p-2 rounded-md"
+          style={{ background: "var(--surface-hi)", border: "1px solid var(--border)" }}
+        >
+          <input
+            value={e.label}
+            onChange={(ev) => update(i, { label: ev.target.value })}
+            placeholder="label"
+            className="field-input flex-[2]"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <input
+            value={e.host}
+            onChange={(ev) => update(i, { host: ev.target.value })}
+            placeholder="host or ip"
+            className="field-input flex-[3]"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <input
+            value={e.port ?? ""}
+            onChange={(ev) => {
+              const raw = ev.target.value.trim();
+              const parsed = raw ? Number(raw) : undefined;
+              update(i, {
+                port: parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined,
+              });
+            }}
+            placeholder="port"
+            inputMode="numeric"
+            className="field-input w-20"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <button
+            type="button"
+            onClick={() => remove(i)}
+            className="text-[var(--text-muted)] hover:text-[var(--danger)] text-lg leading-none w-8 h-8 flex items-center justify-center rounded-md hover:bg-[var(--surface-max)] transition-colors shrink-0"
+            title="Remove endpoint"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button type="button" onClick={add} className="btn btn-ghost h-8 text-xs">
+        Add endpoint
+      </button>
+    </div>
   );
 }
 

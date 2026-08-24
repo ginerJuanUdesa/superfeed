@@ -256,6 +256,8 @@ export default function Grid() {
         ? "Upcoming"
         : type === "github"
         ? "Feed"
+        : type === "fleet"
+        ? "Fleet"
         : "HF Feed";
     const allKinds = ["model", "dataset", "space", "paper"] as HFKind[];
     // Both module types default to "everything included": HF gets all four
@@ -369,6 +371,7 @@ function Toolbar({
       <DraggableTile type="calendar" onDragStart={onDragStart} />
       <DraggableTile type="github" onDragStart={onDragStart} />
       <DraggableTile type="redmine" onDragStart={onDragStart} />
+      <DraggableTile type="fleet" onDragStart={onDragStart} />
     </div>
   );
 }
@@ -409,6 +412,8 @@ function DraggableTile({
       ? "GitHub feed"
       : type === "redmine"
       ? "Redmine issues"
+      : type === "fleet"
+      ? "Fleet status"
       : "HuggingFace feed";
   return (
     <div
@@ -432,11 +437,35 @@ function DraggableTile({
         <img src="/logos/github.png" alt="GitHub" width={24} height={24} className="pointer-events-none" style={{ filter: "invert(1)" }} draggable={false} />
       ) : type === "redmine" ? (
         <RedmineTileIcon />
+      ) : type === "fleet" ? (
+        <FleetTileIcon />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img src="/logos/hf.png" alt="HuggingFace" width={28} height={28} className="pointer-events-none" draggable={false} />
       )}
     </div>
+  );
+}
+
+/** Inline "server rack" glyph for the Fleet rail tile — no external asset. */
+function FleetTileIcon() {
+  return (
+    <svg
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
+      className="pointer-events-none"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+    >
+      <rect x="3.5" y="4" width="17" height="5" rx="1.2" />
+      <rect x="3.5" y="10.5" width="17" height="5" rx="1.2" />
+      <rect x="3.5" y="17" width="17" height="3.5" rx="1" />
+      <circle cx="17.5" cy="6.5" r="0.8" fill="currentColor" stroke="none" />
+      <circle cx="17.5" cy="13" r="0.8" fill="currentColor" stroke="none" />
+    </svg>
   );
 }
 
