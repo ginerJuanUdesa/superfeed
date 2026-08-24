@@ -3,6 +3,7 @@
 # but segfaults on the first DB call.
 FROM node:22-alpine AS deps
 WORKDIR /app
+RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
 RUN npm ci
 
@@ -20,7 +21,10 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# Prod deps only — devDependencies are not needed at runtime.
+# Prod deps only — devDependencies are not needed at runtime. Toolchain is
+# needed because `npm ci` here re-runs better-sqlite3's install script; if
+# the prebuild download fails, it falls back to compiling from source.
+RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
