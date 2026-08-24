@@ -6,6 +6,9 @@ WORKDIR /app
 # only in the deps/runtime layers, not baked into the final image.
 RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
+# Force better-sqlite3 to compile from source. The default install pulls a
+# prebuilt binary that targets glibc; loading it on Alpine (musl) segfaults.
+ENV npm_config_build_from_source=true
 RUN npm ci
 
 # --- build: bring in the source, produce .next ---
@@ -27,6 +30,7 @@ ENV HOSTNAME=0.0.0.0
 # better-sqlite3 from source.
 RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
+ENV npm_config_build_from_source=true
 RUN npm ci --omit=dev
 
 COPY --from=build /app/.next ./.next
