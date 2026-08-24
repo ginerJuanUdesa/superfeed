@@ -661,14 +661,18 @@ function FleetServersField({
       {servers.map((s, i) => (
         <div
           key={i}
-          className="flex gap-2 p-2 rounded-md"
-          style={{ background: "var(--surface-hi)", border: "1px solid var(--border)" }}
+          className="grid gap-2 p-2 rounded-md"
+          style={{
+            background: "var(--surface-hi)",
+            border: "1px solid var(--border)",
+            gridTemplateColumns: "2fr 3fr auto",
+          }}
         >
           <input
             value={s.label}
             onChange={(ev) => update(i, { label: ev.target.value })}
             placeholder="label"
-            className="field-input flex-[2]"
+            className="field-input min-w-0"
             autoComplete="off"
             spellCheck={false}
           />
@@ -676,7 +680,7 @@ function FleetServersField({
             value={s.host}
             onChange={(ev) => update(i, { host: ev.target.value })}
             placeholder="host or ip"
-            className="field-input flex-[3]"
+            className="field-input min-w-0"
             autoComplete="off"
             spellCheck={false}
           />
@@ -719,16 +723,24 @@ function FleetEndpointsField({
         </div>
       )}
       {endpoints.map((e, i) => (
+        // CSS grid instead of flex — .field-input sets width:100%, which
+        // fights `flex-[N]` and made the fixed-width port outrank the
+        // proportional label/host. A grid template pins the port at 4rem,
+        // gives the button auto, and lets label:host share the rest at 2:3.
         <div
           key={i}
-          className="flex gap-2 p-2 rounded-md"
-          style={{ background: "var(--surface-hi)", border: "1px solid var(--border)" }}
+          className="grid gap-2 p-2 rounded-md"
+          style={{
+            background: "var(--surface-hi)",
+            border: "1px solid var(--border)",
+            gridTemplateColumns: "2fr 3fr 4rem auto",
+          }}
         >
           <input
             value={e.label}
             onChange={(ev) => update(i, { label: ev.target.value })}
             placeholder="label"
-            className="field-input flex-[2]"
+            className="field-input min-w-0"
             autoComplete="off"
             spellCheck={false}
           />
@@ -736,7 +748,7 @@ function FleetEndpointsField({
             value={e.host}
             onChange={(ev) => update(i, { host: ev.target.value })}
             placeholder="host or ip"
-            className="field-input flex-[3]"
+            className="field-input min-w-0"
             autoComplete="off"
             spellCheck={false}
           />
@@ -750,7 +762,7 @@ function FleetEndpointsField({
             }}
             placeholder="port"
             inputMode="numeric"
-            className="field-input w-20"
+            className="field-input min-w-0"
             autoComplete="off"
             spellCheck={false}
           />
