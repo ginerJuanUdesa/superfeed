@@ -46,7 +46,36 @@ function headers(token?: string) {
   return h;
 }
 
-/** Follow `Link: rel="next"` cursor pagination until exhausted. */
+/** Fetch with one automatic retry on network-level failures (undici's
+ *  `TypeError: fetch failed`, timeouts, resets). HF's API is chatty enough
+ *  that a single blip during a page-load causes visible "fetch failed"
+ *  errors — the retry makes those transparent. Rejects only if BOTH the
+ *  original and the retry fail. */
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  timeoutMs = 15_000
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      lastErr = err;
+      // Short backoff. Not exponential — a second attempt is usually enough,
+      // and dragging the whole request out just makes the module feel slow.
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+  throw lastErr;
+}
+
+/** Follow `Link: rel="next"` cursor pagination until exhausted. Never
+ *  throws — a mid-pagination failure returns whatever pages we already
+ *  collected, instead of tanking the whole feed. */
 async function fetchAllPages(
   startUrl: string,
   token: string | undefined,
@@ -55,15 +84,20 @@ async function fetchAllPages(
   const out: { user?: string; name?: string; avatarUrl?: string }[] = [];
   let url: string | null = startUrl;
   for (let i = 0; i < maxPages && url; i++) {
-    const res: Response = await fetch(url, {
-      headers: headers(token),
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    });
+    let res: Response;
+    try {
+      res = await fetchWithRetry(url, { headers: headers(token), cache: "no-store" });
+    } catch {
+      break;
+    }
     if (!res.ok) break;
-    out.push(
-      ...((await res.json()) as { user?: string; name?: string; avatarUrl?: string }[])
-    );
+    try {
+      out.push(
+        ...((await res.json()) as { user?: string; name?: string; avatarUrl?: string }[])
+      );
+    } catch {
+      break;
+    }
     const link = res.headers.get("link") ?? "";
     const m = link.match(/<([^>]+)>;\s*rel="next"/);
     url = m ? m[1] : null;
@@ -78,11 +112,7 @@ async function fetchMemberOrgs(
 ): Promise<{ user?: string; name?: string; avatarUrl?: string }[]> {
   const url = `${HF_BASE}/api/users/${encodeURIComponent(user)}/overview`;
   try {
-    const res = await fetch(url, {
-      headers: headers(token),
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    });
+    const res = await fetchWithRetry(url, { headers: headers(token), cache: "no-store" });
     if (!res.ok) return [];
     const data = (await res.json()) as {
       orgs?: { name?: string; avatarUrl?: string }[];
@@ -140,11 +170,12 @@ async function fetchAuthorItems(
 ): Promise<HFItem[]> {
   const api = KIND_TO_API[kind];
   const url = `${HF_BASE}/api/${api}?author=${encodeURIComponent(author)}&sort=lastModified&direction=-1&limit=${limit}&full=true`;
-  const res = await fetch(url, {
-    headers: headers(token),
-    cache: "no-store",
-    signal: AbortSignal.timeout(10_000),
-  });
+  let res: Response;
+  try {
+    res = await fetchWithRetry(url, { headers: headers(token), cache: "no-store" });
+  } catch {
+    return [];
+  }
   if (!res.ok) return [];
   const raw = (await res.json()) as Array<{
     id: string;
@@ -206,11 +237,7 @@ async function fetchRecentCommits(
   if (item.kind === "paper") return [];
   const url = `${HF_BASE}/api/${COMMIT_PATH[item.kind]}/${item.id}/commits/main?limit=30`;
   try {
-    const res = await fetch(url, {
-      headers: headers(token),
-      cache: "no-store",
-      signal: AbortSignal.timeout(8_000),
-    });
+    const res = await fetchWithRetry(url, { headers: headers(token), cache: "no-store" }, 10_000);
     if (!res.ok) return [];
     const raw = (await res.json()) as Array<{
       title?: string;
@@ -229,11 +256,12 @@ async function fetchRecentCommits(
 
 async function fetchAuthorPapers(author: string, token: string | undefined): Promise<HFItem[]> {
   const url = `${HF_BASE}/api/users/${encodeURIComponent(author)}/papers`;
-  const res = await fetch(url, {
-    headers: headers(token),
-    cache: "no-store",
-    signal: AbortSignal.timeout(10_000),
-  });
+  let res: Response;
+  try {
+    res = await fetchWithRetry(url, { headers: headers(token), cache: "no-store" });
+  } catch {
+    return [];
+  }
   if (!res.ok) return [];
   const raw = (await res.json()) as Array<{
     paper: { id: string; title: string; summary?: string; publishedAt?: string };
@@ -287,10 +315,25 @@ export async function fetchFeed(opts: {
 
   // v11: skip HF's auto "initial commit" scaffold when finding first burst.
   const cacheKey = `v11|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
-  if (!fresh) {
-    const hit = feedCache.get(cacheKey);
-    if (hit && Date.now() - hit.at < FEED_TTL_MS) return hit.items;
+  const cached = feedCache.get(cacheKey);
+  if (!fresh && cached && Date.now() - cached.at < FEED_TTL_MS) return cached.items;
+
+  // Serve-stale wrapper: if the actual work throws (HF hiccup, network blip),
+  // we'd rather return the last-known items than surface a "fetch failed" to
+  // the user. Only re-throw when we have NOTHING cached.
+  try {
+    return await fetchFeedInner(opts, cacheKey);
+  } catch (err) {
+    if (cached) return cached.items;
+    throw err;
   }
+}
+
+async function fetchFeedInner(
+  opts: Parameters<typeof fetchFeed>[0],
+  cacheKey: string
+): Promise<HFItem[]> {
+  const { user, kinds, since, perAuthorLimit = 30, token, maxItems = 80 } = opts;
 
   const following = await fetchFollowing(user, token);
   // name -> avatar, which also dedupes accounts returned by both endpoints
