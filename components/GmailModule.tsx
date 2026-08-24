@@ -6,6 +6,7 @@ import { loadSettings } from "./SettingsModal";
 import {
   clearAllGmailClassifications,
   getGmailClassification,
+  preloadGmailClassifications,
   setGmailClassification,
   GmailClassification,
 } from "@/lib/summaryCache";
@@ -119,7 +120,7 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
   const abortRef = useRef<AbortController | null>(null);
 
   const regenerate = useCallback(() => {
-    clearAllGmailClassifications();
+    void clearAllGmailClassifications();
     setClassifications({});
     setRegenTick((t) => t + 1);
   }, []);
@@ -184,16 +185,6 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
     if (!items || items.length === 0) return;
     const settings = loadSettings();
 
-    const cached: Record<string, GmailClassification> = {};
-    const pending: GmailItem[] = [];
-    for (const it of items) {
-      const hit = getGmailClassification(it.id);
-      if (hit) cached[it.id] = hit;
-      else pending.push(it);
-    }
-    if (Object.keys(cached).length) setClassifications((prev) => ({ ...prev, ...cached }));
-    if (!settings.localLlmUrl || !pending.length) return;
-
     let cancelled = false;
 
     async function runBatch(batch: GmailItem[]) {
@@ -238,7 +229,7 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
       }
     }
 
-    async function runAll() {
+    async function runAll(pending: GmailItem[]) {
       const batches: GmailItem[][] = [];
       for (let i = 0; i < pending.length; i += BATCH_SIZE) {
         batches.push(pending.slice(i, i + BATCH_SIZE));
@@ -253,7 +244,26 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
       }
       await Promise.all(Array.from({ length: CONC }, () => worker()));
     }
-    void runAll();
+
+    // Hydrate from the server-side classification store first — otherwise a
+    // fresh device would treat everything as pending and re-classify the
+    // whole inbox.
+    void (async () => {
+      await preloadGmailClassifications();
+      if (cancelled) return;
+
+      const cached: Record<string, GmailClassification> = {};
+      const pending: GmailItem[] = [];
+      for (const it of items) {
+        const hit = getGmailClassification(it.id);
+        if (hit) cached[it.id] = hit;
+        else pending.push(it);
+      }
+      if (Object.keys(cached).length)
+        setClassifications((prev) => ({ ...prev, ...cached }));
+      if (!settings.localLlmUrl || !pending.length) return;
+      await runAll(pending);
+    })();
     return () => {
       cancelled = true;
     };

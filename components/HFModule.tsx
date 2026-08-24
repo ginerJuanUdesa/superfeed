@@ -9,7 +9,7 @@ import {
 } from "@phosphor-icons/react";
 import { HF_KINDS, HFKind, ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
-import { getSummary, keyFor, setSummary } from "@/lib/summaryCache";
+import { getSummary, keyFor, preloadSummaries, setSummary } from "@/lib/summaryCache";
 import type { HFItem } from "@/lib/hf";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
 
@@ -155,28 +155,13 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
     if (!items || items.length === 0) return;
     const settings = loadSettings();
 
-    const initSummaries: Record<string, string> = {};
-    const pending: HFItem[] = [];
-    for (const it of items) {
-      // UPDATE cards show the accumulated commit diff, not an LLM summary.
-      if (it.isUpdate) continue;
-      const k = keyFor(it.kind, it.id, it.isUpdate);
-      const cachedSummary = getSummary(k);
-      if (cachedSummary) initSummaries[k] = cachedSummary;
-      else pending.push(it);
-    }
-    if (Object.keys(initSummaries).length)
-      setSummaries((prev) => ({ ...prev, ...initSummaries }));
-
-    if (!settings.localLlmUrl || !pending.length) return;
-
     let cancelled = false;
     // Serialize summarizer calls — most local LLM backends process one
     // request at a time anyway, and firing in parallel just wastes queue
     // pressure on the backend without arriving faster.
     const CONC = 1;
     let idx = 0;
-    async function worker() {
+    async function worker(pending: HFItem[]) {
       while (!cancelled && idx < pending.length) {
         const it = pending[idx++];
         const k = keyFor(it.kind, it.id, it.isUpdate);
@@ -203,8 +188,29 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
         }
       }
     }
-    const workers = Array.from({ length: CONC }, () => worker());
-    void Promise.all(workers);
+    // Wait for the server-backed summary cache to hydrate before deciding
+    // what's pending — otherwise the first render on a fresh device would
+    // re-summarize items another device has already covered.
+    void (async () => {
+      await preloadSummaries();
+      if (cancelled) return;
+
+      const initSummaries: Record<string, string> = {};
+      const pending: HFItem[] = [];
+      for (const it of items) {
+        // UPDATE cards show the accumulated commit diff, not an LLM summary.
+        if (it.isUpdate) continue;
+        const k = keyFor(it.kind, it.id, it.isUpdate);
+        const cachedSummary = getSummary(k);
+        if (cachedSummary) initSummaries[k] = cachedSummary;
+        else pending.push(it);
+      }
+      if (Object.keys(initSummaries).length)
+        setSummaries((prev) => ({ ...prev, ...initSummaries }));
+
+      if (!settings.localLlmUrl || !pending.length) return;
+      void Promise.all(Array.from({ length: CONC }, () => worker(pending)));
+    })();
     return () => {
       cancelled = true;
     };
