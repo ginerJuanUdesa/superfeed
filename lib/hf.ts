@@ -432,13 +432,23 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
     it.lastCommitBy = head?.by;
     it.avatarUrl = avatars.get(it.author);
 
+    // A repo created via HF's "Duplicate" button gets a synthetic
+    // "Duplicate from <source>" commit — it isn't user-authored content,
+    // and (crucially) the underlying weights/data ALREADY existed publicly
+    // in the source repo. So a private mirror of a public model isn't a
+    // NEW release from the follower's POV. Any real commit the user makes
+    // after the duplicate is a genuine edit → UPDATE.
+    const isDupScaffold = (t: string | undefined) =>
+      (t?.trim().toLowerCase() ?? "").startsWith("duplicate from");
+
     if (list.length === 0) {
       it.isUpdate = false;
       return;
     }
     if (list.length === 1) {
-      // Only commit ever seen → treat as the initial release.
-      it.isUpdate = false;
+      // A lone "Duplicate from" is a re-hosting, not a release. Anything
+      // else that stands alone is the repo's actual first commit → release.
+      it.isUpdate = isDupScaffold(list[0].title);
       return;
     }
 
@@ -462,6 +472,25 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
       ) {
         burstStart = 1;
       }
+    }
+
+    // If the (post-"initial commit") first commit is a "Duplicate from"
+    // scaffold, treat the initial burst as empty — the release moment
+    // belongs to the source repo, not to this mirror. Every real user
+    // commit becomes an update.
+    if (chrono.length > burstStart && isDupScaffold(chrono[burstStart].title)) {
+      const postDupCommits = chrono.slice(burstStart + 1);
+      const titles: string[] = [];
+      for (let j = postDupCommits.length - 1; j >= 0; j--) {
+        const t = postDupCommits[j].title?.trim();
+        if (!t) continue;
+        if (titles.length && titles[titles.length - 1] === t) continue;
+        titles.push(t);
+        if (titles.length >= UPDATE_TITLES_CAP) break;
+      }
+      it.isUpdate = true;
+      it.updateCommits = titles;
+      return;
     }
     let initialBurstEnd = burstStart;
     for (let j = burstStart + 1; j < chrono.length; j++) {
