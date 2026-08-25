@@ -12,6 +12,7 @@ import { loadSettings } from "./SettingsModal";
 import { getSummary, keyFor, preloadSummaries, setSummary } from "@/lib/summaryCache";
 import type { HFItem } from "@/lib/hf";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
+import { useIsDark } from "@/lib/useIsDark";
 
 // Aligned with the HF feed's server cache TTL — polling faster just re-serves cached items.
 const REFRESH_MS = 5 * 60 * 1000;
@@ -22,11 +23,13 @@ interface Props {
   onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
 }
 
-/* HuggingFace's own palette — quoted verbatim so the module reads like an
- * embedded piece of huggingface.co instead of a bespoke card. These are held
- * constant across the app's light/dark themes on purpose: HF is dark on its
- * own site and the visual reference is the whole point of this restyle. */
-const HF = {
+/* HuggingFace's dark palette — quoted verbatim from huggingface.co so the
+ * module reads like an embedded slice of the real site. In light theme we
+ * swap in a celeste-tinted variant (Juan's ask): still recognisable as HF
+ * because the accent yellow and the layout stay the same, but the surface
+ * blends with the rest of the light-mode dashboard instead of dropping a
+ * black rectangle into it. */
+const HF_DARK = {
   bg: "#0b0f19",
   headerBg: "#0f1420",
   border: "#1c2331",
@@ -36,8 +39,23 @@ const HF = {
   text: "#e4e7ee",
   textMuted: "#9aa4b8",
   textFaint: "#6b7385",
-  accent: "#ffb000", // HF's yellow — used sparingly for the kind chip
+  accent: "#ffb000",
 };
+const HF_LIGHT: typeof HF_DARK = {
+  bg: "#eaf3fb",
+  headerBg: "#d9eaf7",
+  border: "#b8d4ea",
+  cardBg: "#ffffff",
+  cardBorder: "#cadcee",
+  iconBg: "#dceaf5",
+  text: "#0d2a4d",
+  textMuted: "#4e6a89",
+  textFaint: "#8ba0b8",
+  accent: "#c47a00", // amber that survives on a light-blue field
+};
+function useHFPalette() {
+  return useIsDark() ? HF_DARK : HF_LIGHT;
+}
 
 const KIND_LABEL: Record<HFKind, string> = {
   model: "model",
@@ -47,6 +65,7 @@ const KIND_LABEL: Record<HFKind, string> = {
 };
 
 function KindIcon({ kind, size = 16 }: { kind: HFKind; size?: number }) {
+  const HF = useHFPalette();
   const color = HF.textMuted;
   if (kind === "dataset") return <Database size={size} color={color} weight="regular" />;
   if (kind === "space") return <Rocket size={size} color={color} weight="regular" />;
@@ -72,6 +91,7 @@ function relativeTime(iso: string): string {
 }
 
 export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
+  const HF = useHFPalette();
   const { releaseKinds, updateKinds, anyKinds } = useMemo(() => {
     const legacy = (module.config.kinds as HFKind[] | undefined) ?? [];
     const rk = (module.config.releaseKinds as HFKind[] | undefined) ?? legacy;
@@ -471,6 +491,7 @@ function BurgerMenu({
   onChangeReleases: (kinds: HFKind[]) => void;
   onChangeUpdates: (kinds: HFKind[]) => void;
 }) {
+  const HF = useHFPalette();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -530,6 +551,7 @@ function KindSection({
   selected: HFKind[];
   onChange: (kinds: HFKind[]) => void;
 }) {
+  const HF = useHFPalette();
   const toggle = (kind: HFKind) => {
     const next = selected.includes(kind)
       ? selected.filter((k) => k !== kind)

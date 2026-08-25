@@ -16,6 +16,7 @@ import { ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
 import type { GithubItem, GithubItemKind, GithubItemState } from "@/lib/github";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
+import { useIsDark } from "@/lib/useIsDark";
 
 interface Props {
   module: ModuleInstance;
@@ -25,9 +26,13 @@ interface Props {
 
 const REFRESH_MS = 5 * 60 * 1000;
 
-/* GitHub's own dark-dimmed palette, quoted verbatim like HF's — this module
- * reads as an embedded slice of github.com's dashboard feed. */
-const GH = {
+/* GitHub's own dark-dimmed palette, quoted verbatim — this module reads as
+ * an embedded slice of github.com's feed. Light theme swaps in a lavender
+ * variant (Juan's ask) so the module tints toward GitHub's own merged/purple
+ * accent color instead of showing a stark black rectangle against the rest
+ * of the light dashboard. Semantic chip colors (open/closed/merged/draft)
+ * stay identical — those must not shift by theme. */
+const GH_DARK = {
   bg: "#0d1117",
   headerBg: "#161b22",
   border: "#30363d",
@@ -44,6 +49,26 @@ const GH = {
   codeBg: "#1f242c",
   codeFg: "#c9d1d9",
 };
+const GH_LIGHT: typeof GH_DARK = {
+  bg: "#f4efff",
+  headerBg: "#e5d9ff",
+  border: "#cbb8ea",
+  cardBg: "#ffffff",
+  cardInnerBg: "#f4efff",
+  text: "#2c1a4d",
+  textMuted: "#5c437d",
+  textFaint: "#8f7bab",
+  link: "#6a30cc",
+  merged: { bg: "#8250df", fg: "#ffffff" },
+  open: { bg: "#1a7f37", fg: "#ffffff" },
+  closed: { bg: "#cf222e", fg: "#ffffff" },
+  draft: { bg: "#57606a", fg: "#ffffff" },
+  codeBg: "#ece1ff",
+  codeFg: "#2c1a4d",
+};
+function useGHPalette() {
+  return useIsDark() ? GH_DARK : GH_LIGHT;
+}
 
 function relativeTime(iso: string): string {
   const then = Date.parse(iso);
@@ -61,6 +86,7 @@ function relativeTime(iso: string): string {
 }
 
 function KindIcon({ kind, size = 12 }: { kind: GithubItemKind; size?: number }) {
+  const GH = useGHPalette();
   const c = GH.textMuted;
   switch (kind) {
     case "pr":
@@ -85,6 +111,7 @@ function KindIcon({ kind, size = 12 }: { kind: GithubItemKind; size?: number }) 
 }
 
 function StateChip({ state, kind }: { state: GithubItemState; kind: GithubItemKind }) {
+  const GH = useGHPalette();
   if (!state) return null;
   const color =
     state === "merged"
@@ -114,6 +141,7 @@ function StateChip({ state, kind }: { state: GithubItemState; kind: GithubItemKi
 }
 
 export default function GithubModule({ module, onRemove }: Props) {
+  const GH = useGHPalette();
   const [items, setItems] = useState<GithubItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -239,6 +267,7 @@ export default function GithubModule({ module, onRemove }: Props) {
 }
 
 function FeedCard({ item }: { item: GithubItem }) {
+  const GH = useGHPalette();
   const hasHash = typeof item.number === "number";
   return (
     <li>
