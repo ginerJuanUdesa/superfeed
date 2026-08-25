@@ -26,6 +26,8 @@ export interface RedmineIssue {
   status: string;
   statusIsClosed: boolean;
   priority: string;
+  /** Numeric id; higher = more severe. Sort key for the feed. */
+  priorityId: number | null;
   author: string;
   assignedTo: string;
   assignedToId: number | null;
@@ -47,7 +49,7 @@ interface RawIssue {
   project?: { id: number; name: string };
   tracker?: { name: string };
   status?: { name: string; is_closed?: boolean };
-  priority?: { name: string };
+  priority?: { id?: number; name: string };
   author?: { name: string };
   assigned_to?: { id?: number; name: string };
   created_on: string;
@@ -173,6 +175,7 @@ function rawToIssue(raw: RawIssue, sinceIso: string | null): RedmineIssue {
     status: raw.status?.name ?? "",
     statusIsClosed: !!raw.status?.is_closed,
     priority: raw.priority?.name ?? "",
+    priorityId: raw.priority?.id ?? null,
     author: raw.author?.name ?? "",
     assignedTo: raw.assigned_to?.name ?? "",
     assignedToId: raw.assigned_to?.id ?? null,
@@ -205,9 +208,7 @@ async function perProjectFeed(
       }
     })
   );
-  return perProject
-    .flat()
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  return perProject.flat().sort(bySeverityThenRecency);
 }
 
 async function perAssigneeFeed(
@@ -217,16 +218,20 @@ async function perAssigneeFeed(
   maxPerAssignee: number
 ): Promise<RedmineIssue[]> {
   const projectSet = projectIds.length ? new Set(projectIds) : null;
+  // When a project is ALSO selected the since window still applies (project
+  // feeds are inherently time-scoped); when only users are selected the goal
+  // is "everything the user has on their plate right now", so ignore since.
+  const applySince = !!sinceIso && projectSet !== null;
   const perUser = await Promise.all(
     assigneeIds.map(async (uid) => {
       try {
         const q = new URLSearchParams({
           assigned_to_id: String(uid),
           status_id: "open",
-          sort: "updated_on:desc",
+          sort: "priority:desc,updated_on:desc",
           limit: String(maxPerAssignee),
         });
-        if (sinceIso) q.set("updated_on", `>=${sinceIso}`);
+        if (applySince) q.set("updated_on", `>=${sinceIso}`);
         const data = await get<{ issues: RawIssue[] }>(`/issues.json?${q.toString()}`);
         const items = (data.issues ?? []).map((raw) => rawToIssue(raw, sinceIso));
         // Intersection with projects (when both dimensions are picked) is
@@ -247,8 +252,14 @@ async function perAssigneeFeed(
   for (const it of perUser.flat()) {
     if (!seen.has(it.id)) seen.set(it.id, it);
   }
-  return [...seen.values()].sort(
-    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+  return [...seen.values()].sort(bySeverityThenRecency);
+}
+
+/** Descending priority id (higher = more severe), tie-broken by newest update. */
+function bySeverityThenRecency(a: RedmineIssue, b: RedmineIssue): number {
+  return (
+    (b.priorityId ?? 0) - (a.priorityId ?? 0) ||
+    Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
   );
 }
 
@@ -338,6 +349,7 @@ export async function getIssueDetail(id: number): Promise<RedmineIssueDetail> {
     status: raw.status?.name ?? "",
     statusIsClosed: !!raw.status?.is_closed,
     priority: raw.priority?.name ?? "",
+    priorityId: raw.priority?.id ?? null,
     author: raw.author?.name ?? "",
     assignedTo: raw.assigned_to?.name ?? "",
     assignedToId: raw.assigned_to?.id ?? null,

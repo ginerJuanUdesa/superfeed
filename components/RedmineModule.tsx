@@ -194,7 +194,9 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
   const sortedItems = useMemo(() => {
     if (!items) return null;
     return [...items].sort(
-      (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+      (a, b) =>
+        (b.priorityId ?? 0) - (a.priorityId ?? 0) ||
+        Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
     );
   }, [items]);
 
