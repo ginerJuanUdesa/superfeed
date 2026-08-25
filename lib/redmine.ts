@@ -28,10 +28,16 @@ export interface RedmineIssue {
   priority: string;
   author: string;
   assignedTo: string;
+  assignedToId: number | null;
   createdAt: string;
   updatedAt: string;
   /** "new" if created within the since-window, otherwise "updated". */
   flag: RedmineFlag;
+}
+
+export interface RedmineUser {
+  id: number;
+  name: string;
 }
 
 interface RawIssue {
@@ -43,7 +49,7 @@ interface RawIssue {
   status?: { name: string; is_closed?: boolean };
   priority?: { name: string };
   author?: { name: string };
-  assigned_to?: { name: string };
+  assigned_to?: { id?: number; name: string };
   created_on: string;
   updated_on: string;
   journals?: RawJournal[];
@@ -134,24 +140,30 @@ export async function listIssues(opts: {
   projectIds: number[];
   since?: string;
   maxPerProject?: number;
+  /** When present and non-empty, only return open issues assigned to one of these user IDs. */
+  assigneeIds?: number[];
 }): Promise<RedmineIssue[]> {
-  const { projectIds, since, maxPerProject = 25 } = opts;
+  const { projectIds, since, maxPerProject = 25, assigneeIds } = opts;
   if (!projectIds.length) return [];
 
   const sinceIso = since ? toRedmineDate(since) : null;
+  const filterByAssignee = !!assigneeIds && assigneeIds.length > 0;
+  const assigneeSet = filterByAssignee ? new Set(assigneeIds) : null;
 
   const perProject = await Promise.all(
     projectIds.map(async (pid) => {
       try {
         const q = new URLSearchParams({
           project_id: String(pid),
-          status_id: "*",
+          // When filtering by user, we only care about open tickets — matches
+          // "mostrar todos los tickets no cerrados asignados a ese user".
+          status_id: filterByAssignee ? "open" : "*",
           sort: "updated_on:desc",
           limit: String(maxPerProject),
         });
         if (sinceIso) q.set("updated_on", `>=${sinceIso}`);
         const data = await get<{ issues: RawIssue[] }>(`/issues.json?${q.toString()}`);
-        return (data.issues ?? []).map((raw): RedmineIssue => {
+        const items = (data.issues ?? []).map((raw): RedmineIssue => {
           const created = raw.created_on;
           const updated = raw.updated_on;
           const isNew = sinceIso ? created >= sinceIso : created === updated;
@@ -168,11 +180,17 @@ export async function listIssues(opts: {
             priority: raw.priority?.name ?? "",
             author: raw.author?.name ?? "",
             assignedTo: raw.assigned_to?.name ?? "",
+            assignedToId: raw.assigned_to?.id ?? null,
             createdAt: created,
             updatedAt: updated,
             flag: isNew ? "new" : "updated",
           };
         });
+        return assigneeSet
+          ? items.filter(
+              (it) => it.assignedToId !== null && assigneeSet.has(it.assignedToId)
+            )
+          : items;
       } catch (err) {
         console.error(`redmine project ${pid} failed:`, err);
         return [] as RedmineIssue[];
@@ -183,6 +201,46 @@ export async function listIssues(opts: {
   return perProject
     .flat()
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
+/**
+ * Union of members across the given projects, deduped by user ID.
+ * Uses /projects/{id}/memberships.json which our (non-admin) API key can read,
+ * unlike /users.json which requires admin. Groups (memberships without a user)
+ * are skipped. Failing projects are logged and left out silently so one broken
+ * membership call doesn't wipe the whole list.
+ */
+export async function listMembersUnion(
+  projectIds: number[]
+): Promise<RedmineUser[]> {
+  if (!projectIds.length) return [];
+  const seen = new Map<number, string>();
+  await Promise.all(
+    projectIds.map(async (pid) => {
+      try {
+        let offset = 0;
+        const limit = 100;
+        for (let page = 0; page < 20; page++) {
+          const data = await get<{
+            memberships: {
+              user?: { id: number; name: string };
+            }[];
+          }>(`/projects/${pid}/memberships.json?limit=${limit}&offset=${offset}`);
+          const chunk = data.memberships ?? [];
+          for (const m of chunk) {
+            if (m.user && !seen.has(m.user.id)) seen.set(m.user.id, m.user.name);
+          }
+          if (chunk.length < limit) break;
+          offset += limit;
+        }
+      } catch (err) {
+        console.error(`redmine memberships ${pid} failed:`, err);
+      }
+    })
+  );
+  return [...seen.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Fetch a single issue with its full journal (notes + field changes). */
@@ -206,6 +264,7 @@ export async function getIssueDetail(id: number): Promise<RedmineIssueDetail> {
     priority: raw.priority?.name ?? "",
     author: raw.author?.name ?? "",
     assignedTo: raw.assigned_to?.name ?? "",
+    assignedToId: raw.assigned_to?.id ?? null,
     createdAt: created,
     updatedAt: updated,
     flag: created === updated ? "new" : "updated",

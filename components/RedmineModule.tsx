@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
-import type { RedmineIssue, RedmineProject } from "@/lib/redmine";
+import type { RedmineIssue, RedmineProject, RedmineUser } from "@/lib/redmine";
 import { useIsDark } from "@/lib/useIsDark";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
 
@@ -98,13 +98,22 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
     () => (module.config.projectIds as number[] | undefined) ?? [],
     [module.config.projectIds]
   );
+  const selectedUserIds = useMemo(
+    () => (module.config.userIds as number[] | undefined) ?? [],
+    [module.config.userIds]
+  );
   const selectedKey = useMemo(
-    () => JSON.stringify([...selectedProjectIds].sort()),
-    [selectedProjectIds]
+    () =>
+      JSON.stringify({
+        p: [...selectedProjectIds].sort(),
+        u: [...selectedUserIds].sort(),
+      }),
+    [selectedProjectIds, selectedUserIds]
   );
 
   const [items, setItems] = useState<RedmineIssue[] | null>(null);
   const [projects, setProjects] = useState<RedmineProject[] | null>(null);
+  const [users, setUsers] = useState<RedmineUser[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -119,6 +128,31 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
       // best-effort
     }
   }, []);
+
+  const projectsKey = useMemo(
+    () => JSON.stringify([...selectedProjectIds].sort()),
+    [selectedProjectIds]
+  );
+
+  const loadUsers = useCallback(async () => {
+    if (!selectedProjectIds.length) {
+      setUsers([]);
+      return;
+    }
+    try {
+      const res = await fetch("/api/redmine/members", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectIds: selectedProjectIds }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { users: RedmineUser[] };
+      setUsers(data.users);
+    } catch {
+      // best-effort
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectsKey]);
 
   const load = useCallback(async () => {
     if (!selectedProjectIds.length) {
@@ -138,6 +172,7 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           projectIds: selectedProjectIds,
+          assigneeIds: selectedUserIds.length ? selectedUserIds : undefined,
           since: settings.startDate || undefined,
         }),
         signal: ctrl.signal,
@@ -162,6 +197,10 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    void loadUsers();
+  }, [loadUsers]);
 
   useAutoRefresh(load, { intervalMs: REFRESH_MS });
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -246,11 +285,16 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
       </div>
 
       <div className="absolute top-0.5 right-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex items-center gap-1">
-        <ProjectMenu
+        <FilterMenu
           projects={projects}
-          selected={selectedProjectIds}
-          onChange={(next) =>
+          users={users}
+          selectedProjects={selectedProjectIds}
+          selectedUsers={selectedUserIds}
+          onChangeProjects={(next) =>
             onUpdateConfig(module.id, { ...module.config, projectIds: next })
+          }
+          onChangeUsers={(next) =>
+            onUpdateConfig(module.id, { ...module.config, userIds: next })
           }
           onRetryProjects={loadProjects}
         />
@@ -443,20 +487,25 @@ function IssueCard({ item }: { item: RedmineIssue }) {
   );
 }
 
-function ProjectMenu({
+function FilterMenu({
   projects,
-  selected,
-  onChange,
+  users,
+  selectedProjects,
+  selectedUsers,
+  onChangeProjects,
+  onChangeUsers,
   onRetryProjects,
 }: {
   projects: RedmineProject[] | null;
-  selected: number[];
-  onChange: (ids: number[]) => void;
+  users: RedmineUser[] | null;
+  selectedProjects: number[];
+  selectedUsers: number[];
+  onChangeProjects: (ids: number[]) => void;
+  onChangeUsers: (ids: number[]) => void;
   onRetryProjects: () => void;
 }) {
   const R = useIsDark() ? R_DARK : R_LIGHT;
   const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState("");
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -467,23 +516,6 @@ function ProjectMenu({
     window.addEventListener("mousedown", onClick);
     return () => window.removeEventListener("mousedown", onClick);
   }, [open]);
-
-  const toggle = (id: number) => {
-    onChange(
-      selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]
-    );
-  };
-
-  const visible = useMemo(() => {
-    if (!projects) return null;
-    const q = filter.trim().toLowerCase();
-    if (!q) return projects;
-    return projects.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.identifier.toLowerCase().includes(q)
-    );
-  }, [projects, filter]);
 
   return (
     <div ref={ref} className="relative no-drag" style={{ fontFamily: REDMINE_FONT }}>
@@ -499,7 +531,7 @@ function ProjectMenu({
           background: "rgba(255,255,255,0.15)",
           border: `1px solid rgba(255,255,255,0.25)`,
         }}
-        title="Pick projects"
+        title="Filter"
       >
         <span className="w-2.5 h-[1.5px] bg-current" />
         <span className="w-2.5 h-[1.5px] bg-current" />
@@ -507,7 +539,7 @@ function ProjectMenu({
       </button>
       {open && (
         <div
-          className="absolute top-6 right-0 w-72 z-20 flex flex-col"
+          className="absolute top-6 right-0 z-20 flex"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           style={{
@@ -515,82 +547,165 @@ function ProjectMenu({
             border: `1px solid ${R.fieldsetBorder}`,
             boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
             color: R.text,
+            width: 480,
             maxHeight: "60vh",
             fontSize: 11,
           }}
         >
-          <div
-            className="px-2 py-1.5 font-bold flex items-center gap-2"
-            style={{
-              background: R.bannerBg,
-              color: R.bannerText,
-              borderBottom: `1px solid #4a6f8f`,
-            }}
-          >
-            <span>Projects</span>
-            <span className="ml-auto font-normal" style={{ color: R.bannerSubtle }}>
-              {selected.length} selected
-            </span>
-          </div>
-          <div className="px-2 py-1.5" style={{ borderBottom: `1px solid ${R.fieldsetBorder}` }}>
-            <input
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="filter…"
-              className="w-full px-1.5 py-[2px] outline-none"
-              style={{
-                background: R.body,
-                border: `1px solid ${R.fieldsetBorder}`,
-                color: R.text,
-                fontFamily: REDMINE_FONT,
-                fontSize: 11,
-              }}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {visible === null && (
-              <div className="px-2 py-2 flex items-center gap-2" style={{ color: R.muted }}>
-                <span>Loading…</span>
-                <button
-                  className="ml-auto hover:underline"
-                  style={{ color: R.link }}
-                  onClick={onRetryProjects}
-                >
-                  retry
-                </button>
-              </div>
-            )}
-            {visible && visible.length === 0 && (
-              <div className="px-2 py-1.5" style={{ color: R.muted }}>
-                No matches.
-              </div>
-            )}
-            {visible?.map((p, idx) => {
-              const checked = selected.includes(p.id);
-              return (
-                <label
-                  key={p.id}
-                  className="flex items-center gap-2 px-2 py-[3px] cursor-pointer"
-                  style={{
-                    color: R.text,
-                    background: idx % 2 === 1 ? R.bodyAlt : R.body,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggle(p.id)}
-                  />
-                  <span className="flex-1 truncate">{p.name}</span>
-                  <span style={{ color: R.faint, fontSize: 10 }}>#{p.id}</span>
-                </label>
-              );
-            })}
-          </div>
+          <FilterColumn
+            title="Projects"
+            items={projects?.map((p) => ({ id: p.id, name: p.name, tag: p.identifier })) ?? null}
+            selected={selectedProjects}
+            onChange={onChangeProjects}
+            onRetry={onRetryProjects}
+            emptyHint="No projects."
+          />
+          <div style={{ width: 1, background: R.fieldsetBorder }} />
+          <FilterColumn
+            title="Users"
+            items={users?.map((u) => ({ id: u.id, name: u.name })) ?? null}
+            selected={selectedUsers}
+            onChange={onChangeUsers}
+            emptyHint={
+              selectedProjects.length === 0
+                ? "Pick at least one project first."
+                : "No members visible for the picked projects."
+            }
+            subtitle={
+              selectedUsers.length > 0
+                ? "only open tickets assigned to these users"
+                : undefined
+            }
+          />
         </div>
       )}
+    </div>
+  );
+}
+
+function FilterColumn({
+  title,
+  subtitle,
+  items,
+  selected,
+  onChange,
+  onRetry,
+  emptyHint,
+}: {
+  title: string;
+  subtitle?: string;
+  items: { id: number; name: string; tag?: string }[] | null;
+  selected: number[];
+  onChange: (ids: number[]) => void;
+  onRetry?: () => void;
+  emptyHint: string;
+}) {
+  const R = useIsDark() ? R_DARK : R_LIGHT;
+  const [filter, setFilter] = useState("");
+  const toggle = (id: number) =>
+    onChange(
+      selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]
+    );
+  const visible = useMemo(() => {
+    if (!items) return null;
+    const q = filter.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (it) =>
+        it.name.toLowerCase().includes(q) ||
+        (it.tag ?? "").toLowerCase().includes(q)
+    );
+  }, [items, filter]);
+
+  return (
+    <div className="flex-1 min-w-0 flex flex-col">
+      <div
+        className="px-2 py-1.5 font-bold flex items-center gap-2"
+        style={{
+          background: R.bannerBg,
+          color: R.bannerText,
+          borderBottom: `1px solid #4a6f8f`,
+        }}
+      >
+        <span>{title}</span>
+        <span className="ml-auto font-normal" style={{ color: R.bannerSubtle }}>
+          {selected.length} selected
+        </span>
+      </div>
+      {subtitle && (
+        <div
+          className="px-2 py-1 italic"
+          style={{
+            color: R.muted,
+            background: R.bodyAlt,
+            borderBottom: `1px solid ${R.fieldsetBorder}`,
+            fontSize: 10,
+          }}
+        >
+          {subtitle}
+        </div>
+      )}
+      <div className="px-2 py-1.5" style={{ borderBottom: `1px solid ${R.fieldsetBorder}` }}>
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="filter…"
+          className="w-full px-1.5 py-[2px] outline-none"
+          style={{
+            background: R.body,
+            border: `1px solid ${R.fieldsetBorder}`,
+            color: R.text,
+            fontFamily: REDMINE_FONT,
+            fontSize: 11,
+          }}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {visible === null && (
+          <div className="px-2 py-2 flex items-center gap-2" style={{ color: R.muted }}>
+            <span>Loading…</span>
+            {onRetry && (
+              <button
+                className="ml-auto hover:underline"
+                style={{ color: R.link }}
+                onClick={onRetry}
+              >
+                retry
+              </button>
+            )}
+          </div>
+        )}
+        {visible && visible.length === 0 && (
+          <div className="px-2 py-1.5" style={{ color: R.muted }}>
+            {emptyHint}
+          </div>
+        )}
+        {visible?.map((it, idx) => {
+          const checked = selected.includes(it.id);
+          return (
+            <label
+              key={it.id}
+              className="flex items-center gap-2 px-2 py-[3px] cursor-pointer"
+              style={{
+                color: R.text,
+                background: idx % 2 === 1 ? R.bodyAlt : R.body,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggle(it.id)}
+              />
+              <span className="flex-1 truncate">{it.name}</span>
+              {it.tag && (
+                <span style={{ color: R.faint, fontSize: 10 }}>#{it.tag}</span>
+              )}
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }

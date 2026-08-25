@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 interface FeedBody {
   projectIds?: number[];
+  assigneeIds?: number[];
   since?: string;
   maxPerProject?: number;
 }
@@ -13,11 +14,11 @@ interface FeedBody {
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as FeedBody;
-    const projectIds = (body.projectIds ?? []).filter(
-      (n) => typeof n === "number" && Number.isFinite(n)
-    );
+    const numericIds = (arr: number[] | undefined) =>
+      (arr ?? []).filter((n) => typeof n === "number" && Number.isFinite(n));
     const items = await listIssues({
-      projectIds,
+      projectIds: numericIds(body.projectIds),
+      assigneeIds: numericIds(body.assigneeIds),
       since: body.since,
       maxPerProject: body.maxPerProject ?? 25,
     });
