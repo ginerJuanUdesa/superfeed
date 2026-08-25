@@ -69,6 +69,21 @@ const R_DARK = {
 const REDMINE_FONT =
   "Verdana, 'Lucida Grande', Geneva, Arial, Helvetica, sans-serif";
 
+/* Severity stripe by Redmine priority id. Normal (default) has no stripe on
+ * purpose — a wall of red is meaningless if everything is red, so we save the
+ * color budget for tickets that actually stand out. */
+const SEVERITY_COLORS: Record<number, { light: string; dark: string }> = {
+  5: { light: "#c92a2a", dark: "#ff6b6b" }, // Inmediata
+  4: { light: "#e8590c", dark: "#ff922b" }, // Urgente
+  3: { light: "#e6a817", dark: "#ffd43b" }, // Alta
+  1: { light: "#adb5bd", dark: "#5c5f66" }, // Baja
+};
+function severityColor(id: number | null, dark: boolean): string | null {
+  if (id == null) return null;
+  const entry = SEVERITY_COLORS[id];
+  return entry ? (dark ? entry.dark : entry.light) : null;
+}
+
 function relativeTime(iso: string): string {
   const then = Date.parse(iso);
   if (!then) return "";
@@ -309,8 +324,10 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
 }
 
 function IssueCard({ item }: { item: RedmineIssue }) {
-  const R = useIsDark() ? R_DARK : R_LIGHT;
+  const dark = useIsDark();
+  const R = dark ? R_DARK : R_LIGHT;
   const isNew = item.flag === "new";
+  const sevColor = severityColor(item.priorityId, dark);
   const cacheKey = `${SUMMARY_CACHE_PREFIX}${item.id}:${item.updatedAt}`;
   const [summary, setSummary] = useState<IssueSummary | null>(null);
   const [sumErr, setSumErr] = useState<string | null>(null);
@@ -383,18 +400,22 @@ function IssueCard({ item }: { item: RedmineIssue }) {
         href={item.url}
         target="_blank"
         rel="noreferrer noopener"
-        className="no-drag block px-2 py-1.5 min-w-0"
+        className="no-drag block py-2 min-w-0"
         draggable={false}
         onMouseDown={(e) => e.stopPropagation()}
+        title={item.priority ? `Priority: ${item.priority}` : undefined}
         style={{
           background: R.body,
           borderBottom: `1px solid ${R.fieldsetBorder}`,
+          borderLeft: sevColor ? `4px solid ${sevColor}` : `4px solid transparent`,
           color: R.text,
+          paddingLeft: 8,
+          paddingRight: 8,
         }}
       >
         {/* line 1: #id + subject + [NEW] + time */}
-        <div className="flex items-baseline gap-1.5 min-w-0 text-[12px] leading-snug">
-          <span className="shrink-0 mono" style={{ color: R.muted }}>
+        <div className="flex items-baseline gap-1.5 min-w-0 text-[14px] leading-snug">
+          <span className="shrink-0 mono text-[12px]" style={{ color: R.muted }}>
             #{item.id}
           </span>
           <span
@@ -412,14 +433,14 @@ function IssueCard({ item }: { item: RedmineIssue }) {
               style={{
                 color: R.new,
                 border: `1px solid ${R.new}55`,
-                fontSize: 9,
+                fontSize: 10,
                 fontWeight: "bold",
               }}
             >
               NEW
             </span>
           )}
-          <span className="shrink-0 mono text-[11px]" style={{ color: R.faint }}>
+          <span className="shrink-0 mono text-[12px]" style={{ color: R.faint }}>
             {relativeTime(item.updatedAt)}
           </span>
         </div>
@@ -427,7 +448,7 @@ function IssueCard({ item }: { item: RedmineIssue }) {
         {/* line 2: author */}
         {item.author && (
           <div
-            className="text-[11px] mt-0.5 pl-[14px] truncate"
+            className="text-[12px] mt-0.5 pl-[22px] truncate"
             style={{ color: R.muted }}
           >
             {item.author}
@@ -437,14 +458,14 @@ function IssueCard({ item }: { item: RedmineIssue }) {
         {/* line 3: summary (or its loading/error state) */}
         {summaryText ? (
           <div
-            className="text-[11.5px] leading-snug line-clamp-2 mt-0.5 pl-[14px]"
+            className="text-[13px] leading-snug line-clamp-2 mt-1 pl-[22px]"
             style={{ color: R.text }}
           >
             {summaryText}
           </div>
         ) : sumErr ? (
           <div
-            className="text-[11px] mt-0.5 pl-[14px] flex items-center gap-1.5 flex-wrap"
+            className="text-[12px] mt-1 pl-[22px] flex items-center gap-1.5 flex-wrap"
           >
             <span style={{ color: R.danger }} className="break-words">
               {sumErr}
@@ -465,7 +486,7 @@ function IssueCard({ item }: { item: RedmineIssue }) {
           </div>
         ) : sumLoading ? (
           <div
-            className="text-[11px] mt-0.5 pl-[14px] italic"
+            className="text-[12px] mt-1 pl-[22px] italic"
             style={{ color: R.faint }}
           >
             summarizing…
