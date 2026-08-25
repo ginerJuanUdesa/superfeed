@@ -69,14 +69,16 @@ const R_DARK = {
 const REDMINE_FONT =
   "Verdana, 'Lucida Grande', Geneva, Arial, Helvetica, sans-serif";
 
-/* Severity stripe by Redmine priority id. Normal (default) has no stripe on
- * purpose — a wall of red is meaningless if everything is red, so we save the
- * color budget for tickets that actually stand out. */
+/* Severity dot by Redmine priority id. All five levels get a color (a bare
+ * card would read as "no priority set" instead of Normal). Inmediata is
+ * called out with a larger dot and a soft halo since it's the "drop what
+ * you're doing" tier and needs to survive a scroll. */
 const SEVERITY_COLORS: Record<number, { light: string; dark: string }> = {
-  5: { light: "#c92a2a", dark: "#ff6b6b" }, // Inmediata
-  4: { light: "#e8590c", dark: "#ff922b" }, // Urgente
-  3: { light: "#e6a817", dark: "#ffd43b" }, // Alta
-  1: { light: "#adb5bd", dark: "#5c5f66" }, // Baja
+  5: { light: "#e70a0a", dark: "#ff3838" }, // Inmediata (saturated red)
+  4: { light: "#d63030", dark: "#ff6b6b" }, // Urgente (red)
+  3: { light: "#f76707", dark: "#ff922b" }, // Alta (naranja)
+  2: { light: "#4dabf7", dark: "#74c0fc" }, // Normal (celeste)
+  1: { light: "#adb5bd", dark: "#868e96" }, // Baja (gris)
 };
 function severityColor(id: number | null, dark: boolean): string | null {
   if (id == null) return null;
@@ -400,21 +402,31 @@ function IssueCard({ item }: { item: RedmineIssue }) {
         href={item.url}
         target="_blank"
         rel="noreferrer noopener"
-        className="no-drag block py-2 min-w-0"
+        className="no-drag block py-2 px-2 min-w-0"
         draggable={false}
         onMouseDown={(e) => e.stopPropagation()}
         title={item.priority ? `Priority: ${item.priority}` : undefined}
         style={{
           background: R.body,
           borderBottom: `1px solid ${R.fieldsetBorder}`,
-          borderLeft: sevColor ? `4px solid ${sevColor}` : `4px solid transparent`,
           color: R.text,
-          paddingLeft: 8,
-          paddingRight: 8,
         }}
       >
-        {/* line 1: #id + subject + [NEW] + time */}
-        <div className="flex items-baseline gap-1.5 min-w-0 text-[14px] leading-snug">
+        {/* line 1: [severity dot] + #id + subject + [NEW] + time */}
+        <div className="flex items-center gap-1.5 min-w-0 text-[14px] leading-snug">
+          {sevColor && (
+            <span
+              aria-hidden
+              className="shrink-0 rounded-full"
+              style={{
+                width: item.priorityId === 5 ? 10 : 8,
+                height: item.priorityId === 5 ? 10 : 8,
+                background: sevColor,
+                boxShadow:
+                  item.priorityId === 5 ? `0 0 0 3px ${sevColor}33` : undefined,
+              }}
+            />
+          )}
           <span className="shrink-0 mono text-[12px]" style={{ color: R.muted }}>
             #{item.id}
           </span>
