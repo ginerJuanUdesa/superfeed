@@ -539,7 +539,7 @@ function FilterMenu({
       </button>
       {open && (
         <div
-          className="absolute top-6 right-0 z-20 flex"
+          className="absolute top-6 right-0 z-20 flex flex-col"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           style={{
@@ -547,8 +547,8 @@ function FilterMenu({
             border: `1px solid ${R.fieldsetBorder}`,
             boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
             color: R.text,
-            width: 480,
-            maxHeight: "60vh",
+            width: 288,
+            maxHeight: "80vh",
             fontSize: 11,
           }}
         >
@@ -560,7 +560,7 @@ function FilterMenu({
             onRetry={onRetryProjects}
             emptyHint="No projects."
           />
-          <div style={{ width: 1, background: R.fieldsetBorder }} />
+          <div style={{ height: 1, background: R.fieldsetBorder }} />
           <FilterColumn
             title="Users"
             items={users?.map((u) => ({ id: u.id, name: u.name })) ?? null}
