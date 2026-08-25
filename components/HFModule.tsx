@@ -42,15 +42,15 @@ const HF_DARK = {
   accent: "#ffb000",
 };
 const HF_LIGHT: typeof HF_DARK = {
-  bg: "#dbe4ee",
-  headerBg: "#c8d3e0",
-  border: "#a5b3c4",
-  cardBg: "#e6ecf3",
-  cardBorder: "#b6c1d0",
-  iconBg: "#ccd7e2",
-  text: "#1c2b3f",
-  textMuted: "#4c5e75",
-  textFaint: "#7a8898",
+  bg: "#d0d5e2",
+  headerBg: "#bcc2d3",
+  border: "#9298ac",
+  cardBg: "#d9dde9",
+  cardBorder: "#aaafc2",
+  iconBg: "#c3c9d9",
+  text: "#181d2f",
+  textMuted: "#495066",
+  textFaint: "#787f92",
   accent: "#a56600",
 };
 function useHFPalette() {

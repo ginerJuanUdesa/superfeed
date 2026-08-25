@@ -50,21 +50,21 @@ const GH_DARK = {
   codeFg: "#c9d1d9",
 };
 const GH_LIGHT: typeof GH_DARK = {
-  bg: "#e2dbef",
-  headerBg: "#d0c3e2",
-  border: "#ac9dc4",
-  cardBg: "#ebe5f4",
-  cardInnerBg: "#dcd3ea",
-  text: "#251844",
-  textMuted: "#564373",
-  textFaint: "#82749b",
+  bg: "#d5d3e5",
+  headerBg: "#c2bfd6",
+  border: "#9691b0",
+  cardBg: "#dcd9ea",
+  cardInnerBg: "#c9c5dc",
+  text: "#1e1a3f",
+  textMuted: "#4a4570",
+  textFaint: "#7c789a",
   link: "#5a2ab0",
   merged: { bg: "#8250df", fg: "#ffffff" },
   open: { bg: "#1a7f37", fg: "#ffffff" },
   closed: { bg: "#cf222e", fg: "#ffffff" },
   draft: { bg: "#57606a", fg: "#ffffff" },
-  codeBg: "#d6cae9",
-  codeFg: "#251844",
+  codeBg: "#c9c5dc",
+  codeFg: "#1e1a3f",
 };
 function useGHPalette() {
   return useIsDark() ? GH_DARK : GH_LIGHT;
