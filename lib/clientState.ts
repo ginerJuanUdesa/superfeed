@@ -95,7 +95,7 @@ export function flushPending() {
 
 /** Event modules subscribe to when they need to react to a settings edit
  *  without waiting for the next auto-refresh tick. */
-export const SETTINGS_CHANGED_EVENT = "unyapper:settings-changed";
+export const SETTINGS_CHANGED_EVENT = "superfeed:settings-changed";
 
 export function saveSettings(settings: unknown) {
   cache.settings = settings;

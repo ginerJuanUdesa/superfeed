@@ -181,13 +181,13 @@ export default function Grid() {
     // Kill text selection across the whole document while the drag is live —
     // scoping user-select:none to just the dragged item isn't enough because
     // the cursor sweeps over other cards' text mid-drag.
-    document.body.classList.add("unyapper-dragging");
+    document.body.classList.add("superfeed-dragging");
   };
   const onDrag = () => {
     movedRef.current = true;
   };
   const onDragStop = () => {
-    document.body.classList.remove("unyapper-dragging");
+    document.body.classList.remove("superfeed-dragging");
     // Flush after the render → effect → saveGrid chain triggered by the
     // final onLayoutChange has run, so we send the FINAL layout, not the
     // one that was pending before this drag. setTimeout(0) queues after
@@ -575,12 +575,29 @@ function MobileCarousel({
 }) {
   const ordered = useMemo(() => {
     const pos = new Map(layout.map((l) => [l.i, l]));
-    return [...modules].sort((a, b) => {
+    const byReadingOrder = [...modules].sort((a, b) => {
       const la = pos.get(a.id);
       const lb = pos.get(b.id);
       if (!la || !lb) return 0;
       return la.y - lb.y || la.x - lb.x;
     });
+    // Group modules of the same type contiguously so swiping between two
+    // Gmail (or two Redmine) inboxes doesn't drop you into a different app in
+    // the middle. The FIRST occurrence of each type in reading order fixes
+    // that type's slot in the carousel, and later modules of that same type
+    // slot in right after — everything else keeps its relative order.
+    const typeOrder = new Map<string, number>();
+    byReadingOrder.forEach((m) => {
+      if (!typeOrder.has(m.type)) typeOrder.set(m.type, typeOrder.size);
+    });
+    return byReadingOrder
+      .map((m, i) => ({ m, i }))
+      .sort((a, b) => {
+        const ta = typeOrder.get(a.m.type) ?? 0;
+        const tb = typeOrder.get(b.m.type) ?? 0;
+        return ta - tb || a.i - b.i;
+      })
+      .map((x) => x.m);
   }, [modules, layout]);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);

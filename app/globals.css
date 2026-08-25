@@ -105,8 +105,8 @@ body {
 .react-grid-item.react-draggable-dragging { transition: none; z-index: 20; }
 /* Dragging or resizing must not paint a text selection anywhere —
    scoped by a class Grid.tsx toggles on <body> for the drag's duration. */
-body.unyapper-dragging,
-body.unyapper-dragging * { user-select: none !important; -webkit-user-select: none !important; }
+body.superfeed-dragging,
+body.superfeed-dragging * { user-select: none !important; -webkit-user-select: none !important; }
 .react-grid-item.resizing { z-index: 20; }
 
 .react-grid-item > .react-resizable-handle {

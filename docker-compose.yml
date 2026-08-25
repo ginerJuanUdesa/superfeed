@@ -1,10 +1,10 @@
 services:
-  unyapper:
+  superfeed:
     build:
       context: .
       dockerfile: Dockerfile
-    image: unyapper:latest
-    container_name: unyapper
+    image: superfeed:latest
+    container_name: superfeed
     restart: unless-stopped
     # Env like REDMINE_URL / LOCAL_LLM_API_KEY sits in .env.local on the host,
     # NOT baked into the image. Kept out of git via .gitignore.

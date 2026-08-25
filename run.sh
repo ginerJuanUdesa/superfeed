@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 if [ ! -d node_modules ]; then
-  echo "[unyapper] installing deps…"
+  echo "[superfeed] installing deps…"
   npm install
 fi
 

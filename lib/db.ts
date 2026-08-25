@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "fs";
 import path from "path";
 
 /**
@@ -13,7 +13,8 @@ import path from "path";
  */
 
 const STATE_DIR = path.join(process.cwd(), ".local");
-const DB_FILE = path.join(STATE_DIR, "unyapper.db");
+const DB_FILE = path.join(STATE_DIR, "superfeed.db");
+const LEGACY_DB_FILE = path.join(STATE_DIR, "unyapper.db");
 const LEGACY_STATE_FILE = path.join(STATE_DIR, "state.json");
 const LEGACY_SETTINGS_FILE = path.join(STATE_DIR, "settings.json");
 
@@ -31,6 +32,15 @@ let dbInstance: Database.Database | null = null;
 function open(): Database.Database {
   if (dbInstance) return dbInstance;
   if (!existsSync(STATE_DIR)) mkdirSync(STATE_DIR, { recursive: true });
+  // Legacy DB rename (unyapper.db → superfeed.db). Only rename when the new
+  // file doesn't exist yet, so a partial run can't clobber the new DB.
+  if (!existsSync(DB_FILE) && existsSync(LEGACY_DB_FILE)) {
+    renameSync(LEGACY_DB_FILE, DB_FILE);
+    for (const ext of ["-wal", "-shm"]) {
+      const legacy = LEGACY_DB_FILE + ext;
+      if (existsSync(legacy)) renameSync(legacy, DB_FILE + ext);
+    }
+  }
   const db = new Database(DB_FILE);
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");

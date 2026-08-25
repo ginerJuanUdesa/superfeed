@@ -18,7 +18,7 @@
 const LEGACY_SUMMARY_KEY = "unyapper:summaries:v1";
 const LEGACY_GMAIL_CLASSIFY_KEY = "unyapper:gmailClassify:v1";
 const LEGACY_MIGRATED_FLAG = "unyapper:migratedToServer:v1";
-const AUTHOR_COLOR_KEY = "unyapper:authorColors:v2";
+const AUTHOR_COLOR_KEY = "superfeed:authorColors:v2";
 
 export interface GmailClassification {
   summary: string;
