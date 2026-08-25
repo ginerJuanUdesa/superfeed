@@ -129,33 +129,19 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
     }
   }, []);
 
-  const projectsKey = useMemo(
-    () => JSON.stringify([...selectedProjectIds].sort()),
-    [selectedProjectIds]
-  );
-
   const loadUsers = useCallback(async () => {
-    if (!selectedProjectIds.length) {
-      setUsers([]);
-      return;
-    }
     try {
-      const res = await fetch("/api/redmine/members", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projectIds: selectedProjectIds }),
-      });
+      const res = await fetch("/api/redmine/members");
       if (!res.ok) return;
       const data = (await res.json()) as { users: RedmineUser[] };
       setUsers(data.users);
     } catch {
       // best-effort
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectsKey]);
+  }, []);
 
   const load = useCallback(async () => {
-    if (!selectedProjectIds.length) {
+    if (!selectedProjectIds.length && !selectedUserIds.length) {
       setItems([]);
       setError(null);
       return;
@@ -212,7 +198,8 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
     );
   }, [items]);
 
-  const noneSelected = selectedProjectIds.length === 0;
+  const noneSelected =
+    selectedProjectIds.length === 0 && selectedUserIds.length === 0;
 
   return (
     <div
@@ -270,7 +257,7 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
         {items && items.length === 0 && !error && (
           <div className="text-[11px]" style={{ color: R.muted }}>
             {noneSelected
-              ? "No projects selected — open the menu (top-right) to pick projects."
+              ? "Nothing selected — open the menu (top-right) and pick projects or users."
               : "No issues in the current window."}
           </div>
         )}
@@ -566,11 +553,7 @@ function FilterMenu({
             items={users?.map((u) => ({ id: u.id, name: u.name })) ?? null}
             selected={selectedUsers}
             onChange={onChangeUsers}
-            emptyHint={
-              selectedProjects.length === 0
-                ? "Pick at least one project first."
-                : "No members visible for the picked projects."
-            }
+            emptyHint="No members visible to this API key."
             subtitle={
               selectedUsers.length > 0
                 ? "only open tickets assigned to these users"

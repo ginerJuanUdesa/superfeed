@@ -144,63 +144,112 @@ export async function listIssues(opts: {
   assigneeIds?: number[];
 }): Promise<RedmineIssue[]> {
   const { projectIds, since, maxPerProject = 25, assigneeIds } = opts;
-  if (!projectIds.length) return [];
-
   const sinceIso = since ? toRedmineDate(since) : null;
   const filterByAssignee = !!assigneeIds && assigneeIds.length > 0;
-  const assigneeSet = filterByAssignee ? new Set(assigneeIds) : null;
 
+  // Two shapes: fan out per project (current behaviour, whole-project feed)
+  // or per user (all open tickets assigned to that user, optionally scoped
+  // by project_id when both dimensions are selected → intersection).
+  // Nothing selected on either dimension → empty feed.
+  if (!filterByAssignee) {
+    if (!projectIds.length) return [];
+    return perProjectFeed(projectIds, sinceIso, maxPerProject);
+  }
+  return perAssigneeFeed(assigneeIds!, projectIds, sinceIso, maxPerProject);
+}
+
+function rawToIssue(raw: RawIssue, sinceIso: string | null): RedmineIssue {
+  const created = raw.created_on;
+  const updated = raw.updated_on;
+  const isNew = sinceIso ? created >= sinceIso : created === updated;
+  return {
+    id: raw.id,
+    url: `${BASE}/issues/${raw.id}`,
+    subject: raw.subject,
+    description: (raw.description ?? "").slice(0, 500),
+    projectId: raw.project?.id ?? 0,
+    projectName: raw.project?.name ?? "",
+    tracker: raw.tracker?.name ?? "",
+    status: raw.status?.name ?? "",
+    statusIsClosed: !!raw.status?.is_closed,
+    priority: raw.priority?.name ?? "",
+    author: raw.author?.name ?? "",
+    assignedTo: raw.assigned_to?.name ?? "",
+    assignedToId: raw.assigned_to?.id ?? null,
+    createdAt: created,
+    updatedAt: updated,
+    flag: isNew ? "new" : "updated",
+  };
+}
+
+async function perProjectFeed(
+  projectIds: number[],
+  sinceIso: string | null,
+  maxPerProject: number
+): Promise<RedmineIssue[]> {
   const perProject = await Promise.all(
     projectIds.map(async (pid) => {
       try {
         const q = new URLSearchParams({
           project_id: String(pid),
-          // When filtering by user, we only care about open tickets — matches
-          // "mostrar todos los tickets no cerrados asignados a ese user".
-          status_id: filterByAssignee ? "open" : "*",
+          status_id: "*",
           sort: "updated_on:desc",
           limit: String(maxPerProject),
         });
         if (sinceIso) q.set("updated_on", `>=${sinceIso}`);
         const data = await get<{ issues: RawIssue[] }>(`/issues.json?${q.toString()}`);
-        const items = (data.issues ?? []).map((raw): RedmineIssue => {
-          const created = raw.created_on;
-          const updated = raw.updated_on;
-          const isNew = sinceIso ? created >= sinceIso : created === updated;
-          return {
-            id: raw.id,
-            url: `${BASE}/issues/${raw.id}`,
-            subject: raw.subject,
-            description: (raw.description ?? "").slice(0, 500),
-            projectId: raw.project?.id ?? pid,
-            projectName: raw.project?.name ?? "",
-            tracker: raw.tracker?.name ?? "",
-            status: raw.status?.name ?? "",
-            statusIsClosed: !!raw.status?.is_closed,
-            priority: raw.priority?.name ?? "",
-            author: raw.author?.name ?? "",
-            assignedTo: raw.assigned_to?.name ?? "",
-            assignedToId: raw.assigned_to?.id ?? null,
-            createdAt: created,
-            updatedAt: updated,
-            flag: isNew ? "new" : "updated",
-          };
-        });
-        return assigneeSet
-          ? items.filter(
-              (it) => it.assignedToId !== null && assigneeSet.has(it.assignedToId)
-            )
-          : items;
+        return (data.issues ?? []).map((raw) => rawToIssue(raw, sinceIso));
       } catch (err) {
         console.error(`redmine project ${pid} failed:`, err);
         return [] as RedmineIssue[];
       }
     })
   );
-
   return perProject
     .flat()
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
+async function perAssigneeFeed(
+  assigneeIds: number[],
+  projectIds: number[],
+  sinceIso: string | null,
+  maxPerAssignee: number
+): Promise<RedmineIssue[]> {
+  const projectSet = projectIds.length ? new Set(projectIds) : null;
+  const perUser = await Promise.all(
+    assigneeIds.map(async (uid) => {
+      try {
+        const q = new URLSearchParams({
+          assigned_to_id: String(uid),
+          status_id: "open",
+          sort: "updated_on:desc",
+          limit: String(maxPerAssignee),
+        });
+        if (sinceIso) q.set("updated_on", `>=${sinceIso}`);
+        const data = await get<{ issues: RawIssue[] }>(`/issues.json?${q.toString()}`);
+        const items = (data.issues ?? []).map((raw) => rawToIssue(raw, sinceIso));
+        // Intersection with projects (when both dimensions are picked) is
+        // enforced client-side — Redmine's /issues.json accepts one project_id
+        // at a time, so we'd otherwise fan out N × M requests.
+        return projectSet
+          ? items.filter((it) => projectSet.has(it.projectId))
+          : items;
+      } catch (err) {
+        console.error(`redmine assignee ${uid} failed:`, err);
+        return [] as RedmineIssue[];
+      }
+    })
+  );
+  // The same ticket can come back via multiple assignees only in theory (one
+  // ticket → one assignee), but dedupe defensively in case of shared groups.
+  const seen = new Map<number, RedmineIssue>();
+  for (const it of perUser.flat()) {
+    if (!seen.has(it.id)) seen.set(it.id, it);
+  }
+  return [...seen.values()].sort(
+    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+  );
 }
 
 /**
@@ -241,6 +290,33 @@ export async function listMembersUnion(
   return [...seen.entries()]
     .map(([id, name]) => ({ id, name }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Every user reachable via this API key — union across every project the key
+ * can list. Cached for ALL_MEMBERS_TTL_MS so a page full of Redmine modules
+ * doesn't fan out N × M membership calls on every mount. Cache is process-
+ * local (fine — a restart just refreshes it once).
+ */
+const ALL_MEMBERS_TTL_MS = 10 * 60 * 1000;
+let allMembersCache: { at: number; users: RedmineUser[] } | null = null;
+let allMembersInflight: Promise<RedmineUser[]> | null = null;
+
+export async function listAllVisibleMembers(): Promise<RedmineUser[]> {
+  const now = Date.now();
+  if (allMembersCache && now - allMembersCache.at < ALL_MEMBERS_TTL_MS) {
+    return allMembersCache.users;
+  }
+  if (allMembersInflight) return allMembersInflight;
+  allMembersInflight = (async () => {
+    const projects = await listProjects();
+    const users = await listMembersUnion(projects.map((p) => p.id));
+    allMembersCache = { at: Date.now(), users };
+    return users;
+  })().finally(() => {
+    allMembersInflight = null;
+  });
+  return allMembersInflight;
 }
 
 /** Fetch a single issue with its full journal (notes + field changes). */
