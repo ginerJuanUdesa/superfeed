@@ -42,16 +42,16 @@ const HF_DARK = {
   accent: "#ffb000",
 };
 const HF_LIGHT: typeof HF_DARK = {
-  bg: "#eaf3fb",
-  headerBg: "#d9eaf7",
-  border: "#b8d4ea",
-  cardBg: "#ffffff",
-  cardBorder: "#cadcee",
-  iconBg: "#dceaf5",
-  text: "#0d2a4d",
-  textMuted: "#4e6a89",
-  textFaint: "#8ba0b8",
-  accent: "#c47a00", // amber that survives on a light-blue field
+  bg: "#dbe4ee",
+  headerBg: "#c8d3e0",
+  border: "#a5b3c4",
+  cardBg: "#e6ecf3",
+  cardBorder: "#b6c1d0",
+  iconBg: "#ccd7e2",
+  text: "#1c2b3f",
+  textMuted: "#4c5e75",
+  textFaint: "#7a8898",
+  accent: "#a56600",
 };
 function useHFPalette() {
   return useIsDark() ? HF_DARK : HF_LIGHT;
