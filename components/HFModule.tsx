@@ -23,12 +23,9 @@ interface Props {
   onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
 }
 
-/* HuggingFace's dark palette — quoted verbatim from huggingface.co so the
- * module reads like an embedded slice of the real site. In light theme we
- * swap in a celeste-tinted variant (Juan's ask): still recognisable as HF
- * because the accent yellow and the layout stay the same, but the surface
- * blends with the rest of the light-mode dashboard instead of dropping a
- * black rectangle into it. */
+/* HuggingFace palette, quoted verbatim from huggingface.co so the module
+ * reads like an embedded slice of the real site — dark in dark mode, white
+ * in light mode (the site's actual light theme). */
 const HF_DARK = {
   bg: "#0b0f19",
   headerBg: "#0f1420",
@@ -42,16 +39,16 @@ const HF_DARK = {
   accent: "#ffb000",
 };
 const HF_LIGHT: typeof HF_DARK = {
-  bg: "#d0d5e2",
-  headerBg: "#bcc2d3",
-  border: "#9298ac",
-  cardBg: "#d9dde9",
-  cardBorder: "#aaafc2",
-  iconBg: "#c3c9d9",
-  text: "#181d2f",
-  textMuted: "#495066",
-  textFaint: "#787f92",
-  accent: "#a56600",
+  bg: "#ffffff",
+  headerBg: "#f5f5f5",
+  border: "#e5e7eb",
+  cardBg: "#ffffff",
+  cardBorder: "#e5e7eb",
+  iconBg: "#f3f4f6",
+  text: "#111827",
+  textMuted: "#4b5563",
+  textFaint: "#6b7280",
+  accent: "#ff9d00",
 };
 function useHFPalette() {
   return useIsDark() ? HF_DARK : HF_LIGHT;

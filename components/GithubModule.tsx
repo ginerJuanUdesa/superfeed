@@ -26,12 +26,9 @@ interface Props {
 
 const REFRESH_MS = 5 * 60 * 1000;
 
-/* GitHub's own dark-dimmed palette, quoted verbatim — this module reads as
- * an embedded slice of github.com's feed. Light theme swaps in a lavender
- * variant (Juan's ask) so the module tints toward GitHub's own merged/purple
- * accent color instead of showing a stark black rectangle against the rest
- * of the light dashboard. Semantic chip colors (open/closed/merged/draft)
- * stay identical — those must not shift by theme. */
+/* GitHub palette, quoted verbatim — this module reads as an embedded slice
+ * of github.com's feed, dark-dimmed in dark mode and the site's own white
+ * light theme in light mode. */
 const GH_DARK = {
   bg: "#0d1117",
   headerBg: "#161b22",
@@ -50,21 +47,21 @@ const GH_DARK = {
   codeFg: "#c9d1d9",
 };
 const GH_LIGHT: typeof GH_DARK = {
-  bg: "#d5d3e5",
-  headerBg: "#c2bfd6",
-  border: "#9691b0",
-  cardBg: "#dcd9ea",
-  cardInnerBg: "#c9c5dc",
-  text: "#1e1a3f",
-  textMuted: "#4a4570",
-  textFaint: "#7c789a",
-  link: "#5a2ab0",
+  bg: "#ffffff",
+  headerBg: "#f6f8fa",
+  border: "#d0d7de",
+  cardBg: "#ffffff",
+  cardInnerBg: "#f6f8fa",
+  text: "#1f2328",
+  textMuted: "#59636e",
+  textFaint: "#818b98",
+  link: "#0969da",
   merged: { bg: "#8250df", fg: "#ffffff" },
   open: { bg: "#1a7f37", fg: "#ffffff" },
   closed: { bg: "#cf222e", fg: "#ffffff" },
   draft: { bg: "#57606a", fg: "#ffffff" },
-  codeBg: "#c9c5dc",
-  codeFg: "#1e1a3f",
+  codeBg: "#f6f8fa",
+  codeFg: "#1f2328",
 };
 function useGHPalette() {
   return useIsDark() ? GH_DARK : GH_LIGHT;
