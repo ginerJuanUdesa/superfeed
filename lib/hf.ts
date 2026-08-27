@@ -317,17 +317,20 @@ export async function fetchFeed(opts: {
   perAuthorLimit?: number;
   token?: string;
   maxItems?: number;
+  /** Cursor for infinite scroll: return items strictly older than this ms. */
+  beforeMs?: number;
   /** Force a sweep now, even if the last one was recent. */
   fresh?: boolean;
 }): Promise<HFItem[]> {
-  const { user, kinds, since, maxItems = 80, fresh } = opts;
+  const { user, kinds, since, maxItems = 80, fresh, beforeMs } = opts;
   const sinceMs = since ? Date.parse(since) : 0;
 
-  // Sweep is rate-limited per (user, kinds, since): we'd rather serve a
-  // second-old DB read than hammer HF on every focus/blur refresh. `fresh`
-  // (from an explicit page reload) bypasses the limiter.
+  // Paginated reads (beforeMs is set) skip the sweep — they're serving a
+  // cursor into what the DB already has, and re-sweeping on scroll would be
+  // both expensive and pointless.
   const key = `v12|${user}|${[...kinds].sort().join(",")}|${since ?? ""}`;
-  const shouldSweep = fresh || Date.now() - (lastSweepAt.get(key) ?? 0) >= FEED_TTL_MS;
+  const shouldSweep =
+    !beforeMs && (fresh || Date.now() - (lastSweepAt.get(key) ?? 0) >= FEED_TTL_MS);
   if (shouldSweep) {
     try {
       await runSweep(opts);
@@ -343,6 +346,7 @@ export async function fetchFeed(opts: {
   const rows = selectHFItems({
     kinds,
     sinceMs: sinceMs || undefined,
+    beforeMs: beforeMs || undefined,
     limit: maxItems,
   });
   return rows.map((r) => JSON.parse(r.itemJson) as HFItem);

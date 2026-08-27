@@ -9,6 +9,7 @@ interface Body {
   token?: string;
   since?: string;
   max?: number;
+  page?: number;
 }
 
 export async function POST(req: NextRequest) {
@@ -18,13 +19,14 @@ export async function POST(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "Missing GitHub username." }, { status: 400 });
     }
-    const items = await fetchFeed({
+    const { items, hasMore } = await fetchFeed({
       user,
       token: body.token?.trim() || undefined,
       since: body.since,
       max: body.max ?? 30,
+      page: body.page && body.page > 0 ? Math.min(body.page, 10) : 1,
     });
-    return NextResponse.json({ items });
+    return NextResponse.json({ items, hasMore });
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

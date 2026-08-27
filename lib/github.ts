@@ -269,26 +269,28 @@ function normalize(ev: RawEvent): GithubItem | null {
 }
 
 const FEED_TTL_MS = 60 * 1000;
-const feedCache = new Map<string, { at: number; items: GithubItem[] }>();
+const feedCache = new Map<string, { at: number; items: GithubItem[]; hasMore: boolean }>();
 
 export async function fetchFeed(opts: {
   user: string;
   token?: string;
   max?: number;
   since?: string;
-}): Promise<GithubItem[]> {
-  const { user, token, max = 30, since } = opts;
-  const cacheKey = `${user}|${since ?? ""}|${max}`;
+  page?: number;
+}): Promise<{ items: GithubItem[]; hasMore: boolean }> {
+  const { user, token, max = 30, since, page = 1 } = opts;
+  const cacheKey = `${user}|${since ?? ""}|${max}|p${page}`;
   const hit = feedCache.get(cacheKey);
-  if (hit && Date.now() - hit.at < FEED_TTL_MS) return hit.items;
+  if (hit && Date.now() - hit.at < FEED_TTL_MS) return { items: hit.items, hasMore: hit.hasMore };
 
   // received_events returns events that would show up on the user's dashboard.
   // Requires a token with `read:user` for the private feed variant, but the
   // public endpoint works with any token or none for public activity.
-  const url = `${GH_BASE}/users/${encodeURIComponent(user)}/received_events?per_page=${Math.min(
-    max * 2,
-    100
-  )}`;
+  // GitHub's events endpoint caps at 10 pages of up to 100 items — we ask
+  // for a full page here and let the client stitch pages together for
+  // infinite scroll.
+  const perPage = Math.min(Math.max(max, 30), 100);
+  const url = `${GH_BASE}/users/${encodeURIComponent(user)}/received_events?per_page=${perPage}&page=${page}`;
   const res = await fetch(url, {
     headers: headers(token),
     cache: "no-store",
@@ -300,15 +302,18 @@ export async function fetchFeed(opts: {
   }
   const raw = (await res.json()) as RawEvent[];
   const sinceMs = since ? Date.parse(since) : 0;
+  // hasMore reflects the raw page, not the normalized/filtered subset — a
+  // page can be full of events we can't render, and there's still a next
+  // page after it.
+  const hasMore = raw.length === perPage && page < 10;
 
   const items: GithubItem[] = [];
   for (const ev of raw) {
     if (sinceMs && Date.parse(ev.created_at) < sinceMs) continue;
     const norm = normalize(ev);
     if (norm) items.push(norm);
-    if (items.length >= max) break;
   }
 
-  feedCache.set(cacheKey, { at: Date.now(), items });
-  return items;
+  feedCache.set(cacheKey, { at: Date.now(), items, hasMore });
+  return { items, hasMore };
 }

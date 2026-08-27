@@ -147,8 +147,9 @@ export async function fetchInbox(opts: {
   refreshToken: string;
   since?: string;
   max?: number;
-}): Promise<GmailItem[]> {
-  const { account, clientId, clientSecret, refreshToken, since, max = 25 } = opts;
+  pageToken?: string;
+}): Promise<{ items: GmailItem[]; nextPageToken: string | null }> {
+  const { account, clientId, clientSecret, refreshToken, since, max = 25, pageToken } = opts;
   const token = await accessTokenFor(clientId, clientSecret, refreshToken);
   const accountEmail = await fetchProfileEmail(token);
 
@@ -159,7 +160,9 @@ export async function fetchInbox(opts: {
   }
   const q = parts.join(" ");
 
-  const listUrl = `${GMAIL_BASE}/messages?maxResults=${max}&q=${encodeURIComponent(q)}`;
+  const listUrl =
+    `${GMAIL_BASE}/messages?maxResults=${max}&q=${encodeURIComponent(q)}` +
+    (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
   const listRes = await fetch(listUrl, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(10_000),
@@ -170,9 +173,11 @@ export async function fetchInbox(opts: {
   }
   const list = (await listRes.json()) as {
     messages?: { id: string; threadId?: string }[];
+    nextPageToken?: string;
   };
   const ids = (list.messages ?? []).map((m) => m.id);
-  if (!ids.length) return [];
+  const nextPageToken = list.nextPageToken ?? null;
+  if (!ids.length) return { items: [], nextPageToken };
 
   const details = await pool(
     ids.map((id) => async () => {
@@ -217,5 +222,5 @@ export async function fetchInbox(opts: {
       isUnread: (d.labelIds ?? []).includes("UNREAD"),
     });
   }
-  return items;
+  return { items, nextPageToken };
 }

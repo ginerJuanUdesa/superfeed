@@ -12,6 +12,8 @@ export async function POST(req: NextRequest) {
       since?: string;
       token?: string;
       fresh?: boolean;
+      beforeMs?: number;
+      limit?: number;
     };
     const user = (body.user ?? "").trim();
     if (!user) {
@@ -20,14 +22,17 @@ export async function POST(req: NextRequest) {
     const kinds: HFKind[] = body.kinds?.length
       ? body.kinds
       : (["model", "dataset", "space", "paper"] as HFKind[]);
+    const limit = body.limit && body.limit > 0 ? Math.min(body.limit, 200) : 80;
     const items = await fetchFeed({
       user,
       kinds,
       since: body.since,
       token: body.token,
       fresh: body.fresh,
+      beforeMs: body.beforeMs,
+      maxItems: limit,
     });
-    return NextResponse.json({ items });
+    return NextResponse.json({ items, hasMore: items.length === limit });
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

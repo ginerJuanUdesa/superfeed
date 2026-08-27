@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchInbox, GmailItem } from "@/lib/gmail";
+import { fetchInbox } from "@/lib/gmail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +13,8 @@ interface FeedBody {
   }[];
   since?: string;
   maxPerAccount?: number;
+  /** Per-account cursor for infinite scroll: keyed by account label. */
+  pageTokens?: Record<string, string | null>;
 }
 
 export async function POST(req: NextRequest) {
@@ -39,8 +41,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const pageTokens = body.pageTokens ?? {};
+    // On a paginated call, skip accounts whose cursor is null (no more mail).
+    // On an initial call (no cursors sent) all accounts fetch page 1.
+    const isPaginated = Object.keys(pageTokens).length > 0;
+    const activeAccounts = isPaginated
+      ? accounts.filter((a) => pageTokens[a.label])
+      : accounts;
+
     const results = await Promise.all(
-      accounts.map(async (a) => {
+      activeAccounts.map(async (a) => {
         try {
           return await fetchInbox({
             account: a.label,
@@ -49,20 +59,26 @@ export async function POST(req: NextRequest) {
             refreshToken: a.refreshToken,
             since: body.since,
             max: body.maxPerAccount ?? 25,
+            pageToken: pageTokens[a.label] ?? undefined,
           });
         } catch (err) {
           // one dead account shouldn't take down the whole feed
           console.error(`gmail account ${a.label} failed:`, err);
-          return [] as GmailItem[];
+          return { items: [], nextPageToken: null };
         }
       })
     );
 
     const items = results
-      .flat()
+      .flatMap((r) => r.items)
       .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt));
 
-    return NextResponse.json({ items });
+    const nextPageTokens: Record<string, string | null> = {};
+    activeAccounts.forEach((a, i) => {
+      nextPageTokens[a.label] = results[i].nextPageToken;
+    });
+
+    return NextResponse.json({ items, nextPageTokens });
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

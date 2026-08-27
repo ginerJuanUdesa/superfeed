@@ -142,50 +142,102 @@ export default function GithubModule({ module, onRemove }: Props) {
   const [items, setItems] = useState<GithubItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const load = useCallback(async () => {
+  const fetchPage = useCallback(async (nextPage: number, signal: AbortSignal) => {
     const settings = loadSettings();
     const user = settings.githubUsername.trim();
     if (!user) {
       setError("Set your GitHub username in Settings");
       setItems([]);
-      return;
+      setHasMore(false);
+      return null;
     }
+    const res = await fetch("/api/github/feed", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        user,
+        token: settings.githubToken || undefined,
+        since: settings.startDate || undefined,
+        page: nextPage,
+      }),
+      signal,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(body.error ?? `HTTP ${res.status}`);
+    }
+    return (await res.json()) as { items: GithubItem[]; hasMore: boolean };
+  }, []);
+
+  const load = useCallback(async () => {
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/github/feed", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          user,
-          token: settings.githubToken || undefined,
-          since: settings.startDate || undefined,
-        }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        throw new Error(body.error ?? `HTTP ${res.status}`);
-      }
-      const data = (await res.json()) as { items: GithubItem[] };
+      const data = await fetchPage(1, ctrl.signal);
+      if (!data) return;
       setItems(data.items);
+      setHasMore(data.hasMore);
+      setPage(1);
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message);
       setItems([]);
+      setHasMore(false);
       return false;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchPage]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || loading || !hasMore) return;
+    const ctrl = new AbortController();
+    setLoadingMore(true);
+    try {
+      const next = page + 1;
+      const data = await fetchPage(next, ctrl.signal);
+      if (!data) return;
+      setItems((prev) => {
+        const seen = new Set((prev ?? []).map((it) => it.id));
+        const merged = [...(prev ?? [])];
+        for (const it of data.items) if (!seen.has(it.id)) merged.push(it);
+        return merged;
+      });
+      setHasMore(data.hasMore);
+      setPage(next);
+    } catch {
+      // silent — user can try scrolling again
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [fetchPage, hasMore, loading, loadingMore, page]);
 
   useAutoRefresh(load, { intervalMs: REFRESH_MS });
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    const root = scrollRef.current;
+    if (!el || !root || !hasMore) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadMore();
+      },
+      { root, rootMargin: "200px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loadMore, items]);
 
   const empty = items && items.length === 0;
 
@@ -215,7 +267,7 @@ export default function GithubModule({ module, onRemove }: Props) {
         )}
       </div>
 
-      <div className="relative flex-1 min-h-0 overflow-y-auto" style={{ background: GH.bg }}>
+      <div ref={scrollRef} className="relative flex-1 min-h-0 overflow-y-auto" style={{ background: GH.bg }}>
         {error && (
           <div
             className="m-3 px-3 py-2 text-xs rounded-md"
@@ -234,6 +286,15 @@ export default function GithubModule({ module, onRemove }: Props) {
               <FeedCard key={it.id} item={it} />
             ))}
           </ul>
+        )}
+        {items && items.length > 0 && hasMore && (
+          <div
+            ref={sentinelRef}
+            className="py-3 text-center text-[11px] mono"
+            style={{ color: GH.textFaint }}
+          >
+            {loadingMore ? "loading more…" : ""}
+          </div>
         )}
         {empty && !error && (
           <div

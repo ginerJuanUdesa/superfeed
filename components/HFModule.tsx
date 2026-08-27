@@ -108,27 +108,29 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const PAGE_SIZE = 40;
 
-  const load = useCallback(async (fresh = false) => {
-    const settings = loadSettings();
-    const user = settings.hfUsername.trim();
-    if (!user) {
-      setError("Set your HF username in Settings");
-      setItems([]);
-      return;
-    }
-    if (!anyKinds.length) {
-      setItems([]);
-      setError(null);
-      return;
-    }
-    abortRef.current?.abort();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    setLoading(true);
-    setError(null);
-    try {
+  const fetchChunk = useCallback(
+    async (opts: { fresh: boolean; beforeMs?: number }, signal: AbortSignal) => {
+      const settings = loadSettings();
+      const user = settings.hfUsername.trim();
+      if (!user) {
+        setError("Set your HF username in Settings");
+        setItems([]);
+        setHasMore(false);
+        return null;
+      }
+      if (!anyKinds.length) {
+        setItems([]);
+        setError(null);
+        setHasMore(false);
+        return null;
+      }
       const res = await fetch("/api/hf/feed", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -137,25 +139,69 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
           kinds: anyKinds,
           since: settings.startDate || undefined,
           token: settings.hfToken || undefined,
-          fresh,
+          fresh: opts.fresh,
+          beforeMs: opts.beforeMs,
+          limit: PAGE_SIZE,
         }),
-        signal: ctrl.signal,
+        signal,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      const data = (await res.json()) as { items: HFItem[] };
+      return (await res.json()) as { items: HFItem[]; hasMore: boolean };
+    },
+    [anyKinds]
+  );
+
+  const load = useCallback(async (fresh = false) => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchChunk({ fresh }, ctrl.signal);
+      if (!data) return;
       setItems(data.items);
+      setHasMore(data.hasMore);
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message);
       setItems([]);
+      setHasMore(false);
       return false;
     } finally {
       setLoading(false);
     }
-  }, [anyKinds]);
+  }, [fetchChunk]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || loading || !hasMore || !items || items.length === 0) return;
+    const tail = items[items.length - 1];
+    const beforeMs = Date.parse(tail.lastModified);
+    if (!beforeMs) return;
+    const ctrl = new AbortController();
+    setLoadingMore(true);
+    try {
+      const data = await fetchChunk({ fresh: false, beforeMs }, ctrl.signal);
+      if (!data) return;
+      setItems((prev) => {
+        const seen = new Set((prev ?? []).map((it) => `${it.kind}:${it.id}`));
+        const merged = [...(prev ?? [])];
+        for (const it of data.items) {
+          const k = `${it.kind}:${it.id}`;
+          if (!seen.has(k)) merged.push(it);
+        }
+        return merged;
+      });
+      setHasMore(data.hasMore);
+    } catch {
+      // silent
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [fetchChunk, hasMore, items, loading, loadingMore]);
 
   // First call bypasses the server cache so page reloads see fresh HF
   // activity; subsequent polls hit the cache to stay cheap.
@@ -167,6 +213,20 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
   }, [load]);
   useAutoRefresh(pollingLoad, { intervalMs: REFRESH_MS });
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    const root = scrollRef.current;
+    if (!el || !root || !hasMore) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadMore();
+      },
+      { root, rootMargin: "200px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loadMore, items]);
 
   useEffect(() => {
     if (!items || items.length === 0) return;
@@ -277,7 +337,7 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
         )}
       </div>
 
-      <div className="relative flex-1 min-h-0 overflow-y-auto">
+      <div ref={scrollRef} className="relative flex-1 min-h-0 overflow-y-auto">
         {error && (
           <div
             className="m-3 px-3 py-2 text-xs rounded-md"
@@ -436,6 +496,15 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
               );
             })}
           </ul>
+        )}
+        {visibleItems && visibleItems.length > 0 && hasMore && (
+          <div
+            ref={sentinelRef}
+            className="py-3 text-center text-[11px] mono"
+            style={{ color: HF.textFaint }}
+          >
+            {loadingMore ? "loading more…" : ""}
+          </div>
         )}
         {empty && !error && (
           <div

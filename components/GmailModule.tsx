@@ -116,8 +116,18 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
   const [classifications, setClassifications] = useState<Record<string, GmailClassification>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [pageTokens, setPageTokens] = useState<Record<string, string | null>>({});
   const [regenTick, setRegenTick] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // hasMore: at least one selected account still has a next page.
+  const hasMore = useMemo(
+    () => Object.values(pageTokens).some((t) => !!t),
+    [pageTokens]
+  );
 
   const regenerate = useCallback(() => {
     void clearAllGmailClassifications();
@@ -125,29 +135,25 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
     setRegenTick((t) => t + 1);
   }, []);
 
-  const load = useCallback(async () => {
-    const settings = loadSettings();
-    const accounts = settings.gmailAccounts.filter(
-      (a) => selectedAccounts.includes(a.label) && a.refreshToken
-    );
-    if (!accounts.length) {
-      setError(null);
-      setItems([]);
-      return;
-    }
-    const missing = accounts.filter((a) => !a.clientId || !a.clientSecret);
-    if (missing.length) {
-      setError(`Missing OAuth client for: ${missing.map((m) => m.label).join(", ")}`);
-      setItems([]);
-      return;
-    }
-
-    abortRef.current?.abort();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    setLoading(true);
-    setError(null);
-    try {
+  const fetchChunk = useCallback(
+    async (opts: { pageTokens?: Record<string, string | null> }, signal: AbortSignal) => {
+      const settings = loadSettings();
+      const accounts = settings.gmailAccounts.filter(
+        (a) => selectedAccounts.includes(a.label) && a.refreshToken
+      );
+      if (!accounts.length) {
+        setError(null);
+        setItems([]);
+        setPageTokens({});
+        return null;
+      }
+      const missing = accounts.filter((a) => !a.clientId || !a.clientSecret);
+      if (missing.length) {
+        setError(`Missing OAuth client for: ${missing.map((m) => m.label).join(", ")}`);
+        setItems([]);
+        setPageTokens({});
+        return null;
+      }
       const res = await fetch("/api/gmail/feed", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -159,27 +165,87 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
             clientSecret: a.clientSecret,
           })),
           since: settings.startDate || undefined,
+          pageTokens: opts.pageTokens,
         }),
-        signal: ctrl.signal,
+        signal,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      const data = (await res.json()) as { items: GmailItem[] };
+      return (await res.json()) as {
+        items: GmailItem[];
+        nextPageTokens: Record<string, string | null>;
+      };
+    },
+    [selectedAccounts]
+  );
+
+  const load = useCallback(async () => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchChunk({}, ctrl.signal);
+      if (!data) return;
       setItems(data.items);
+      setPageTokens(data.nextPageTokens);
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message);
       setItems([]);
+      setPageTokens({});
       return false;
     } finally {
       setLoading(false);
     }
-  }, [selectedAccounts]);
+  }, [fetchChunk]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || loading || !hasMore) return;
+    // Only ask accounts that still have a cursor. Others stay at their tail.
+    const active: Record<string, string | null> = {};
+    for (const [k, v] of Object.entries(pageTokens)) if (v) active[k] = v;
+    if (!Object.keys(active).length) return;
+    const ctrl = new AbortController();
+    setLoadingMore(true);
+    try {
+      const data = await fetchChunk({ pageTokens: active }, ctrl.signal);
+      if (!data) return;
+      setItems((prev) => {
+        const seen = new Set((prev ?? []).map((it) => it.id));
+        const merged = [...(prev ?? [])];
+        for (const it of data.items) if (!seen.has(it.id)) merged.push(it);
+        return merged;
+      });
+      // Merge the returned cursors on top of the existing map: accounts we
+      // didn't query keep their prior cursor value.
+      setPageTokens((prev) => ({ ...prev, ...data.nextPageTokens }));
+    } catch {
+      // silent
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [fetchChunk, hasMore, loading, loadingMore, pageTokens]);
 
   useAutoRefresh(load, { intervalMs: REFRESH_MS });
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    const root = scrollRef.current;
+    if (!el || !root || !hasMore) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadMore();
+      },
+      { root, rootMargin: "200px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loadMore, items]);
 
   useEffect(() => {
     if (!items || items.length === 0) return;
@@ -313,7 +379,7 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
         )}
       </div>
 
-      <div className="relative flex-1 min-h-0 overflow-y-auto" style={{ background: G.bg }}>
+      <div ref={scrollRef} className="relative flex-1 min-h-0 overflow-y-auto" style={{ background: G.bg }}>
         {error && (
           <div
             className="m-3 px-3 py-2 text-xs rounded-md"
@@ -337,6 +403,15 @@ export default function GmailModule({ module, onRemove, onUpdateConfig }: Props)
               />
             ))}
           </ul>
+        )}
+        {visibleItems && visibleItems.length > 0 && hasMore && (
+          <div
+            ref={sentinelRef}
+            className="py-3 text-center text-[11px] mono"
+            style={{ color: G.textFaint }}
+          >
+            {loadingMore ? "loading more…" : ""}
+          </div>
         )}
         {empty && !error && (
           <div

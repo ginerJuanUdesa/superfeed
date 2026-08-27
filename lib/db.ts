@@ -268,20 +268,23 @@ export function upsertHFItems(
 export function selectHFItems(opts: {
   kinds: string[];
   sinceMs?: number;
+  beforeMs?: number;
   limit: number;
 }): HFItemRow[] {
   if (opts.kinds.length === 0) return [];
   const placeholders = opts.kinds.map(() => "?").join(",");
   const sinceClause = opts.sinceMs ? "AND last_modified >= ?" : "";
+  const beforeClause = opts.beforeMs ? "AND last_modified < ?" : "";
   const sql = `
     SELECT kind, id, last_modified AS lastModified, is_update AS isUpdate, item_json AS itemJson
     FROM hf_items
-    WHERE kind IN (${placeholders}) ${sinceClause}
+    WHERE kind IN (${placeholders}) ${sinceClause} ${beforeClause}
     ORDER BY last_modified DESC
     LIMIT ?
   `;
   const params: (string | number)[] = [...opts.kinds];
   if (opts.sinceMs) params.push(opts.sinceMs);
+  if (opts.beforeMs) params.push(opts.beforeMs);
   params.push(opts.limit);
   const rows = open().prepare(sql).all(...params) as {
     kind: string;
