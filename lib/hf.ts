@@ -3,6 +3,8 @@ import {
   upsertHFItems,
   selectHFAccounts,
   upsertHFAccounts,
+  selectHFItemsByAuthorKind,
+  deleteHFItems,
 } from "./db";
 
 export type HFKind = "model" | "dataset" | "space" | "paper";
@@ -374,19 +376,72 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
     [...avatars.entries()].map(([name, avatarUrl]) => ({ name, avatarUrl }))
   );
 
-  const tasks: (() => Promise<HFItem[]>)[] = [];
+  interface SweepResult {
+    author: string;
+    kind: HFKind;
+    items: HFItem[];
+    /** Only set for non-paper kinds — signals whether the response filled
+     *  the perAuthorLimit window. Drives the pruner's conservative logic. */
+    windowFull?: boolean;
+  }
+  const tasks: (() => Promise<SweepResult>)[] = [];
   for (const author of authors) {
     for (const kind of kinds) {
       if (kind === "paper") {
-        tasks.push(() => fetchAuthorPapers(author, token));
+        tasks.push(async () => ({
+          author,
+          kind,
+          items: await fetchAuthorPapers(author, token),
+        }));
       } else {
-        tasks.push(() => fetchAuthorItems(author, kind, token, perAuthorLimit));
+        tasks.push(async () => {
+          const items = await fetchAuthorItems(author, kind, token, perAuthorLimit);
+          return { author, kind, items, windowFull: items.length >= perAuthorLimit };
+        });
       }
     }
   }
 
   const results = await pool(tasks, 12);
-  const flat = results.flat();
+  const flat = results.flatMap((r) => r?.items ?? []);
+
+  // Reconcile with the DB: for every (author, kind) we just refreshed,
+  // detect items that disappeared upstream and delete them so they stop
+  // showing up in future reads. See the comment on selectHFItemsByAuthorKind.
+  //
+  // Papers are per-user profile listings and a single paper can be listed
+  // under multiple co-authors we follow — we skip paper pruning here rather
+  // than risk deleting a paper that another followed author still lists.
+  const toDelete: { kind: string; id: string }[] = [];
+  for (const r of results) {
+    if (!r || r.kind === "paper") continue;
+    const seenIds = new Set(r.items.map((it) => it.id));
+    const dbRows = selectHFItemsByAuthorKind(r.author, r.kind);
+    if (r.windowFull) {
+      // Only prune inside the visible window: anything with lastModified
+      // >= min(response.lastModified) should have shown up in the response.
+      // If it didn't, it was deleted upstream.
+      let minMs = Infinity;
+      for (const it of r.items) {
+        const t = Date.parse(it.lastModified);
+        if (t && t < minMs) minMs = t;
+      }
+      if (minMs !== Infinity) {
+        for (const row of dbRows) {
+          if (row.lastModified >= minMs && !seenIds.has(row.id)) {
+            toDelete.push({ kind: r.kind, id: row.id });
+          }
+        }
+      }
+    } else {
+      // Response wasn't full → we saw the author's whole inventory for
+      // this kind. Anything in DB that isn't in the response is deleted.
+      for (const row of dbRows) {
+        if (!seenIds.has(row.id)) toDelete.push({ kind: r.kind, id: row.id });
+      }
+    }
+  }
+  if (toDelete.length) deleteHFItems(toDelete);
 
   const sinceMs = since ? Date.parse(since) : 0;
   const filtered = sinceMs

@@ -242,6 +242,34 @@ export interface HFItemRow {
   itemJson: string;
 }
 
+/** Return every DB item for a single (author, kind) — the LIKE 'author/%'
+ *  matches HF's `author/name` id convention. Used by the sweep-time pruner
+ *  to spot rows that HF no longer serves. */
+export function selectHFItemsByAuthorKind(
+  author: string,
+  kind: string
+): { id: string; lastModified: number }[] {
+  const rows = open()
+    .prepare(
+      `SELECT id, last_modified AS lastModified
+       FROM hf_items
+       WHERE kind = ? AND id LIKE ? || '/%'`
+    )
+    .all(kind, author) as { id: string; lastModified: number }[];
+  return rows;
+}
+
+/** Bulk delete by (kind, id) pairs. Silent on missing rows. */
+export function deleteHFItems(rows: { kind: string; id: string }[]): void {
+  if (rows.length === 0) return;
+  const db = open();
+  const stmt = db.prepare(`DELETE FROM hf_items WHERE kind = ? AND id = ?`);
+  const tx = db.transaction((batch: typeof rows) => {
+    for (const r of batch) stmt.run(r.kind, r.id);
+  });
+  tx(rows);
+}
+
 export function upsertHFItems(
   rows: { kind: string; id: string; lastModified: number; isUpdate: boolean; itemJson: string }[]
 ): void {
