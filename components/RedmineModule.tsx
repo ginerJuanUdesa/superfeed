@@ -109,6 +109,44 @@ function severityColor(id: number | null, dark: boolean): string | null {
   return entry ? (dark ? entry.dark : entry.light) : null;
 }
 
+/* Cache keys used to be `redmine-summary:<id>:<updatedAt>`; they're now just
+ * `redmine-summary:<id>`. Without this, the key-format change would orphan
+ * every previously-cached summary and re-run the slow LLM on the whole feed.
+ * On a miss under the new key, adopt any surviving legacy entry for this id
+ * (the freshest one) into the new key and drop the stale ones. */
+function migrateLegacySummary(id: number, newKey: string): string | null {
+  const legacyPrefix = `${SUMMARY_CACHE_PREFIX}${id}:`;
+  let best: { key: string; value: string; updatedAt: string } | null = null;
+  const stale: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(legacyPrefix)) continue;
+      const value = localStorage.getItem(k);
+      if (!value) continue;
+      let updatedAt = "";
+      try {
+        updatedAt = (JSON.parse(value) as IssueSummary).updatedAt ?? "";
+      } catch {
+        // keep updatedAt empty; still a candidate, just lowest priority
+      }
+      if (!best || updatedAt > best.updatedAt) {
+        if (best) stale.push(best.key);
+        best = { key: k, value, updatedAt };
+      } else {
+        stale.push(k);
+      }
+    }
+    if (!best) return null;
+    localStorage.setItem(newKey, best.value);
+    stale.push(best.key);
+    for (const k of stale) localStorage.removeItem(k);
+    return best.value;
+  } catch {
+    return best?.value ?? null;
+  }
+}
+
 function relativeTime(iso: string): string {
   const then = Date.parse(iso);
   if (!then) return "";
@@ -443,7 +481,7 @@ function IssueCard({ item }: { item: RedmineIssue }) {
   // had a chance to set it, and every reload re-called the LLM.
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(cacheKey);
+      const raw = localStorage.getItem(cacheKey) ?? migrateLegacySummary(item.id, cacheKey);
       if (raw) {
         const cached = JSON.parse(raw) as IssueSummary;
         setSummary(cached);
