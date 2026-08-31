@@ -222,24 +222,37 @@ async function perAssigneeFeed(
   // feeds are inherently time-scoped); when only users are selected the goal
   // is "everything the user has on their plate right now", so ignore since.
   const applySince = !!sinceIso && projectSet !== null;
+  // One page of open tickets (by priority) plus one page of the most recently
+  // closed ones. The UI shows the closed page under a "Cerrados" divider once
+  // the open ones run out, so keep them in separate queries — a single
+  // status_id:"*" page could let a wall of closed tickets crowd out open ones.
+  const fetchByStatus = async (
+    uid: number,
+    statusId: "open" | "closed",
+    sort: string
+  ): Promise<RedmineIssue[]> => {
+    const q = new URLSearchParams({
+      assigned_to_id: String(uid),
+      status_id: statusId,
+      sort,
+      limit: String(maxPerAssignee),
+    });
+    if (applySince) q.set("updated_on", `>=${sinceIso}`);
+    const data = await get<{ issues: RawIssue[] }>(`/issues.json?${q.toString()}`);
+    const items = (data.issues ?? []).map((raw) => rawToIssue(raw, sinceIso));
+    // Intersection with projects (when both dimensions are picked) is
+    // enforced client-side — Redmine's /issues.json accepts one project_id
+    // at a time, so we'd otherwise fan out N × M requests.
+    return projectSet ? items.filter((it) => projectSet.has(it.projectId)) : items;
+  };
   const perUser = await Promise.all(
     assigneeIds.map(async (uid) => {
       try {
-        const q = new URLSearchParams({
-          assigned_to_id: String(uid),
-          status_id: "open",
-          sort: "priority:desc,updated_on:desc",
-          limit: String(maxPerAssignee),
-        });
-        if (applySince) q.set("updated_on", `>=${sinceIso}`);
-        const data = await get<{ issues: RawIssue[] }>(`/issues.json?${q.toString()}`);
-        const items = (data.issues ?? []).map((raw) => rawToIssue(raw, sinceIso));
-        // Intersection with projects (when both dimensions are picked) is
-        // enforced client-side — Redmine's /issues.json accepts one project_id
-        // at a time, so we'd otherwise fan out N × M requests.
-        return projectSet
-          ? items.filter((it) => projectSet.has(it.projectId))
-          : items;
+        const [open, closed] = await Promise.all([
+          fetchByStatus(uid, "open", "priority:desc,updated_on:desc"),
+          fetchByStatus(uid, "closed", "updated_on:desc"),
+        ]);
+        return [...open, ...closed];
       } catch (err) {
         console.error(`redmine assignee ${uid} failed:`, err);
         return [] as RedmineIssue[];

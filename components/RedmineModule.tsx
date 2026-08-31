@@ -208,13 +208,24 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
   useAutoRefresh(load, { intervalMs: REFRESH_MS });
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const sortedItems = useMemo(() => {
+  // Open tickets lead, sorted by severity then recency (the working queue).
+  // Closed ones drop below a "Cerrados" divider, most-recently-closed first —
+  // priority is meaningless once a ticket is done.
+  const openItems = useMemo(() => {
     if (!items) return null;
-    return [...items].sort(
-      (a, b) =>
-        (b.priorityId ?? 0) - (a.priorityId ?? 0) ||
-        Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
-    );
+    return items
+      .filter((it) => !it.statusIsClosed)
+      .sort(
+        (a, b) =>
+          (b.priorityId ?? 0) - (a.priorityId ?? 0) ||
+          Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+      );
+  }, [items]);
+  const closedItems = useMemo(() => {
+    if (!items) return null;
+    return items
+      .filter((it) => it.statusIsClosed)
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   }, [items]);
 
   const noneSelected =
@@ -281,9 +292,29 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
           </div>
         )}
 
-        {sortedItems && sortedItems.length > 0 && (
+        {((openItems && openItems.length > 0) ||
+          (closedItems && closedItems.length > 0)) && (
           <ul>
-            {sortedItems.map((it) => (
+            {openItems?.map((it) => (
+              <IssueCard key={`${it.projectId}-${it.id}`} item={it} />
+            ))}
+            {closedItems && closedItems.length > 0 && (
+              <li aria-hidden>
+                <div
+                  className="px-2 py-1 text-[11px] font-bold uppercase"
+                  style={{
+                    color: R.closed,
+                    background: R.bodyAlt,
+                    borderTop: `1px solid ${R.fieldsetBorder}`,
+                    borderBottom: `1px solid ${R.fieldsetBorder}`,
+                    letterSpacing: "0.06em",
+                  }}
+                >
+                  Cerrados
+                </div>
+              </li>
+            )}
+            {closedItems?.map((it) => (
               <IssueCard key={`${it.projectId}-${it.id}`} item={it} />
             ))}
           </ul>
