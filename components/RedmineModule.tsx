@@ -384,7 +384,10 @@ function IssueCard({ item }: { item: RedmineIssue }) {
   const R = dark ? R_DARK : R_LIGHT;
   const isNew = item.flag === "new";
   const sevColor = severityColor(item.priorityId, dark);
-  const cacheKey = `${SUMMARY_CACHE_PREFIX}${item.id}:${item.updatedAt}`;
+  // Stable per-ticket key (no updatedAt). The cached body carries the
+  // updatedAt it was made for, so we can tell a stale open ticket from a
+  // closed one without letting every updated_on bump churn a fresh key.
+  const cacheKey = `${SUMMARY_CACHE_PREFIX}${item.id}`;
   const [summary, setSummary] = useState<IssueSummary | null>(null);
   const [sumErr, setSumErr] = useState<string | null>(null);
   const [sumLoading, setSumLoading] = useState(false);
@@ -442,14 +445,18 @@ function IssueCard({ item }: { item: RedmineIssue }) {
     try {
       const raw = localStorage.getItem(cacheKey);
       if (raw) {
-        setSummary(JSON.parse(raw) as IssueSummary);
-        return;
+        const cached = JSON.parse(raw) as IssueSummary;
+        setSummary(cached);
+        // Closed tickets never re-summarize — their content is final and the
+        // slow local LLM shouldn't re-run just because the status flipped.
+        // Open tickets refresh only when their content actually moved on.
+        if (item.statusIsClosed || cached.updatedAt === item.updatedAt) return;
       }
     } catch {
       // ignore
     }
     void fetchSummary();
-  }, [cacheKey, fetchSummary]);
+  }, [cacheKey, fetchSummary, item.statusIsClosed, item.updatedAt]);
 
   const subjectColor = item.statusIsClosed ? R.closed : R.link;
   const summaryText = summary?.headline ?? "";
