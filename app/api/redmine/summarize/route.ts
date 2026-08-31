@@ -131,6 +131,11 @@ export async function POST(req: NextRequest) {
         temperature: 0.2,
         max_tokens: 4096,
         stream: false,
+        // Same reason as /api/summarize: reasoning backends otherwise spend the
+        // whole token budget thinking and leave message.content empty. Turn
+        // thinking off so the call is reliable and several times faster.
+        chat_template_kwargs: { enable_thinking: false },
+        reasoning_effort: "none",
       }),
       signal: AbortSignal.timeout(120_000),
     });
@@ -143,9 +148,13 @@ export async function POST(req: NextRequest) {
       );
     }
     const data = (await upstream.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: {
+        finish_reason?: string;
+        message?: { content?: string; reasoning_content?: string };
+      }[];
     };
-    const content = data.choices?.[0]?.message?.content ?? "";
+    const msg = data.choices?.[0]?.message ?? {};
+    const content = msg.content?.trim() || msg.reasoning_content?.trim() || "";
     const parsed = extractJSON(content);
     const headline =
       typeof parsed.headline === "string" ? parsed.headline.trim() : "";

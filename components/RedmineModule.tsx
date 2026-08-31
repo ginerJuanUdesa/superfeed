@@ -16,6 +16,29 @@ interface Props {
 const REFRESH_MS = 5 * 60 * 1000;
 const SUMMARY_CACHE_PREFIX = "redmine-summary:";
 
+/* Each IssueCard used to fire its own summarize the moment it mounted, so a
+ * feed of 30 tickets hit the local LLM with 30 concurrent requests. That
+ * backend processes ~one at a time, so they all just queued past the 120s
+ * timeout and every card showed "timeout". This is a tiny global gate (shared
+ * across every card and every Redmine module on the page) that lets only a few
+ * summaries run at once; the rest wait their turn instead of piling on. */
+const SUMMARY_MAX_CONCURRENT = 2;
+let summaryActive = 0;
+const summaryQueue: (() => void)[] = [];
+function acquireSummarySlot(): Promise<() => void> {
+  return new Promise((resolve) => {
+    const start = () => {
+      summaryActive++;
+      resolve(() => {
+        summaryActive--;
+        summaryQueue.shift()?.();
+      });
+    };
+    if (summaryActive < SUMMARY_MAX_CONCURRENT) start();
+    else summaryQueue.push(start);
+  });
+}
+
 /* Classic Redmine palette (light) + a matching dark variant that keeps the
  * blue banner as the identity anchor and darkens the body / borders. */
 const R_LIGHT = {
@@ -377,6 +400,9 @@ function IssueCard({ item }: { item: RedmineIssue }) {
     }
     setSumLoading(true);
     setSumErr(null);
+    // Wait for a slot before touching the network so 30 cards don't stampede
+    // the single-threaded local LLM (which just makes them all time out).
+    const release = await acquireSummarySlot();
     try {
       const res = await fetch("/api/redmine/summarize", {
         method: "POST",
@@ -403,6 +429,7 @@ function IssueCard({ item }: { item: RedmineIssue }) {
       setSumErr((err as Error).message);
       fetchedRef.current = false; // allow retry
     } finally {
+      release();
       setSumLoading(false);
     }
   }, [cacheKey, item.id]);
