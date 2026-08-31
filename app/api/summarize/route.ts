@@ -100,32 +100,53 @@ export async function POST(req: NextRequest) {
         temperature: 0.3,
         max_tokens: 4096,
         stream: false,
+        // This task wants a 14-word fragment, not a reasoning trace. Reasoning
+        // backends (Qwen3 & co. behind vLLM) otherwise burn the whole token
+        // budget in `reasoning_content` and leave `message.content` empty on a
+        // `finish_reason: "length"` — the summary then silently fails. Turning
+        // thinking off makes the call both reliable and several times faster.
+        chat_template_kwargs: { enable_thinking: false },
+        reasoning_effort: "none",
       }),
       signal: AbortSignal.timeout(120_000),
     });
 
     if (!upstream.ok) {
       const body = await upstream.text().catch(() => "");
+      console.error(`[summarize] LLM ${upstream.status} for ${item.author}/${item.name}: ${body.slice(0, 200)}`);
       return NextResponse.json(
         { error: `LLM ${upstream.status}: ${body.slice(0, 200)}` },
         { status: 502 }
       );
     }
     const data = (await upstream.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: {
+        finish_reason?: string;
+        message?: { content?: string; reasoning_content?: string };
+      }[];
     };
-    const content = data.choices?.[0]?.message?.content ?? "";
+    const choice = data.choices?.[0];
+    const msg = choice?.message ?? {};
+    // Reasoning backends put the answer in `content` but, when they run out of
+    // budget mid-thought (`finish_reason: "length"`), `content` is empty while
+    // `reasoning_content` holds the trace. Fall back to the trace so a partial
+    // JSON blob there can still be salvaged instead of silently failing.
+    const content = msg.content?.trim() || msg.reasoning_content?.trim() || "";
     const parsed = extractJSON(content);
     const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
     if (!summary) {
+      console.error(
+        `[summarize] unusable output for ${item.author}/${item.name} (finish=${choice?.finish_reason}): ${content.slice(0, 200)}`
+      );
       return NextResponse.json(
-        { error: "LLM returned unusable output", raw: content.slice(0, 300) },
+        { error: "LLM returned unusable output", finish: choice?.finish_reason, raw: content.slice(0, 300) },
         { status: 502 }
       );
     }
     return NextResponse.json({ summary });
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
+    console.error(`[summarize] error: ${message}`);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
