@@ -89,11 +89,23 @@ function extractJSON(text: string): { results?: ClassifyResult[] } {
       try {
         return JSON.parse(m[0]);
       } catch {
-        // ignore
+        // ignore — fall through to per-object salvage
       }
     }
   }
-  return {};
+  // The whole-JSON parse failed, usually because the array was truncated
+  // mid-entry (finish_reason: length). Salvage every self-contained result
+  // object so a cut-off batch still summarizes the emails that made it in,
+  // instead of throwing the entire batch away.
+  const results: ClassifyResult[] = [];
+  for (const match of trimmed.matchAll(/\{[^{}]*"id"[^{}]*\}/g)) {
+    try {
+      results.push(JSON.parse(match[0]) as ClassifyResult);
+    } catch {
+      // skip a malformed fragment
+    }
+  }
+  return results.length ? { results } : {};
 }
 
 function authHeaders(): Record<string, string> {
@@ -142,6 +154,12 @@ export async function POST(req: NextRequest) {
         temperature: 0.2,
         max_tokens: 4096,
         stream: false,
+        // Classification needs no chain-of-thought. With thinking on, a
+        // reasoning backend spends the whole token budget reasoning and either
+        // leaves content empty or truncates the JSON array mid-way, so the
+        // batch fails to parse and those emails never get a summary.
+        chat_template_kwargs: { enable_thinking: false },
+        reasoning_effort: "none",
       }),
       signal: AbortSignal.timeout(180_000),
     });
@@ -153,9 +171,14 @@ export async function POST(req: NextRequest) {
       );
     }
     const data = (await upstream.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: {
+        finish_reason?: string;
+        message?: { content?: string; reasoning_content?: string };
+      }[];
     };
-    const content = data.choices?.[0]?.message?.content ?? "";
+    const choice = data.choices?.[0];
+    const msg = choice?.message ?? {};
+    const content = msg.content?.trim() || msg.reasoning_content?.trim() || "";
     const parsed = extractJSON(content);
 
     // Filter to entries that at least reference one of the ids we sent.
@@ -171,8 +194,11 @@ export async function POST(req: NextRequest) {
       .filter((r) => r.summary.length > 0);
 
     if (!results.length) {
+      console.error(
+        `[gmail/classify] unusable output for ${items.length} emails (finish=${choice?.finish_reason}): ${content.slice(0, 200)}`
+      );
       return NextResponse.json(
-        { error: "LLM returned unusable output", raw: content.slice(0, 300) },
+        { error: "LLM returned unusable output", finish: choice?.finish_reason, raw: content.slice(0, 300) },
         { status: 502 }
       );
     }
