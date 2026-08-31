@@ -48,7 +48,7 @@ interface RawIssue {
   description?: string;
   project?: { id: number; name: string };
   tracker?: { name: string };
-  status?: { name: string; is_closed?: boolean };
+  status?: { id?: number; name: string; is_closed?: boolean };
   priority?: { id?: number; name: string };
   author?: { name: string };
   assigned_to?: { id?: number; name: string };
@@ -113,6 +113,31 @@ async function get<T>(path: string, timeoutMs = 15_000): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * Redmine's `/issues.json` omits `status.is_closed` (only `id` + `name`), so we
+ * can't tell open from closed off a single issue. `/issue_statuses.json` is the
+ * global list that carries `is_closed`; fetch it once and cache the closed ids
+ * for the process lifetime — statuses are configuration, they barely change.
+ */
+let closedStatusIdsCache: Set<number> | null = null;
+async function getClosedStatusIds(): Promise<Set<number>> {
+  if (closedStatusIdsCache) return closedStatusIdsCache;
+  try {
+    const data = await get<{
+      issue_statuses?: { id: number; is_closed?: boolean }[];
+    }>(`/issue_statuses.json`);
+    const set = new Set<number>();
+    for (const s of data.issue_statuses ?? []) {
+      if (s.is_closed) set.add(s.id);
+    }
+    closedStatusIdsCache = set;
+    return set;
+  } catch (err) {
+    console.error("redmine issue_statuses failed:", err);
+    return new Set();
+  }
+}
+
 /** Every active project the API key can see. Paged transparently. */
 export async function listProjects(): Promise<RedmineProject[]> {
   const out: RedmineProject[] = [];
@@ -160,10 +185,19 @@ export async function listIssues(opts: {
   return perAssigneeFeed(assigneeIds!, projectIds, sinceIso, maxPerProject);
 }
 
-function rawToIssue(raw: RawIssue, sinceIso: string | null): RedmineIssue {
+function rawToIssue(
+  raw: RawIssue,
+  sinceIso: string | null,
+  closedStatusIds: Set<number>
+): RedmineIssue {
   const created = raw.created_on;
   const updated = raw.updated_on;
   const isNew = sinceIso ? created >= sinceIso : created === updated;
+  // Prefer an explicit is_closed when present; otherwise resolve via the
+  // status id against the cached closed-status set (the /issues.json case).
+  const statusIsClosed =
+    raw.status?.is_closed === true ||
+    (raw.status?.id != null && closedStatusIds.has(raw.status.id));
   return {
     id: raw.id,
     url: `${BASE}/issues/${raw.id}`,
@@ -173,7 +207,7 @@ function rawToIssue(raw: RawIssue, sinceIso: string | null): RedmineIssue {
     projectName: raw.project?.name ?? "",
     tracker: raw.tracker?.name ?? "",
     status: raw.status?.name ?? "",
-    statusIsClosed: !!raw.status?.is_closed,
+    statusIsClosed,
     priority: raw.priority?.name ?? "",
     priorityId: raw.priority?.id ?? null,
     author: raw.author?.name ?? "",
@@ -190,6 +224,7 @@ async function perProjectFeed(
   sinceIso: string | null,
   maxPerProject: number
 ): Promise<RedmineIssue[]> {
+  const closedStatusIds = await getClosedStatusIds();
   const perProject = await Promise.all(
     projectIds.map(async (pid) => {
       try {
@@ -201,7 +236,7 @@ async function perProjectFeed(
         });
         if (sinceIso) q.set("updated_on", `>=${sinceIso}`);
         const data = await get<{ issues: RawIssue[] }>(`/issues.json?${q.toString()}`);
-        return (data.issues ?? []).map((raw) => rawToIssue(raw, sinceIso));
+        return (data.issues ?? []).map((raw) => rawToIssue(raw, sinceIso, closedStatusIds));
       } catch (err) {
         console.error(`redmine project ${pid} failed:`, err);
         return [] as RedmineIssue[];
@@ -222,6 +257,7 @@ async function perAssigneeFeed(
   // feeds are inherently time-scoped); when only users are selected the goal
   // is "everything the user has on their plate right now", so ignore since.
   const applySince = !!sinceIso && projectSet !== null;
+  const closedStatusIds = await getClosedStatusIds();
   // One page of open tickets (by priority) plus one page of the most recently
   // closed ones. The UI shows the closed page under a "Cerrados" divider once
   // the open ones run out, so keep them in separate queries — a single
@@ -239,7 +275,12 @@ async function perAssigneeFeed(
     });
     if (applySince) q.set("updated_on", `>=${sinceIso}`);
     const data = await get<{ issues: RawIssue[] }>(`/issues.json?${q.toString()}`);
-    const items = (data.issues ?? []).map((raw) => rawToIssue(raw, sinceIso));
+    const items = (data.issues ?? []).map((raw) => {
+      const it = rawToIssue(raw, sinceIso, closedStatusIds);
+      // The "closed" query returns closed tickets by definition — trust that
+      // over the status map in case the map ever comes back empty.
+      return statusId === "closed" ? { ...it, statusIsClosed: true } : it;
+    });
     // Intersection with projects (when both dimensions are picked) is
     // enforced client-side — Redmine's /issues.json accepts one project_id
     // at a time, so we'd otherwise fan out N × M requests.
@@ -345,9 +386,10 @@ export async function listAllVisibleMembers(): Promise<RedmineUser[]> {
 
 /** Fetch a single issue with its full journal (notes + field changes). */
 export async function getIssueDetail(id: number): Promise<RedmineIssueDetail> {
-  const data = await get<{ issue: RawIssue }>(
-    `/issues/${id}.json?include=journals`
-  );
+  const [data, closedStatusIds] = await Promise.all([
+    get<{ issue: RawIssue }>(`/issues/${id}.json?include=journals`),
+    getClosedStatusIds(),
+  ]);
   const raw = data.issue;
   const created = raw.created_on;
   const updated = raw.updated_on;
@@ -360,7 +402,9 @@ export async function getIssueDetail(id: number): Promise<RedmineIssueDetail> {
     projectName: raw.project?.name ?? "",
     tracker: raw.tracker?.name ?? "",
     status: raw.status?.name ?? "",
-    statusIsClosed: !!raw.status?.is_closed,
+    statusIsClosed:
+      raw.status?.is_closed === true ||
+      (raw.status?.id != null && closedStatusIds.has(raw.status.id)),
     priority: raw.priority?.name ?? "",
     priorityId: raw.priority?.id ?? null,
     author: raw.author?.name ?? "",
