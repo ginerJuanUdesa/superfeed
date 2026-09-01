@@ -290,23 +290,18 @@ function isReleaseScaffoldTitle(title: string): boolean {
 }
 
 /**
- * When a repo FIRST shipped weights/data — the oldest commit that touched an
+ * When a repo last (re)shipped weights/data — the NEWEST commit that touched an
  * artifact file, read from the tree where every file carries the commit that
- * last modified it. We take the oldest such date (not the newest): adding a
- * second weight format months after launch — nvidia/canary-1b-v2 shipped
- * `.nemo` in 2025 and added `.safetensors` a year later — is an UPDATE to an
- * existing model, not a fresh release, so the release moment is the earliest
- * artifact we can see. Any LFS file counts as an artifact (that's how the
- * `.nemo` gets seen). Returns ms, or null when the tree is unreadable or holds
- * no artifacts, in which case the caller falls back to the commit-burst
- * heuristic.
- *
- * Caveat: a file's tree entry only records its LAST touch, so if the very
- * first weights were later overwritten in place we'd see that later date. In
- * practice initial shards are rarely re-committed, and any residual artifact
- * from the launch (tokenizer, an original shard, a plot) still pins the date.
+ * last modified it. Changing the weights is a release, even for an old model:
+ * nvidia/canary-1b-v2 shipping a `.safetensors` a year after its original
+ * `.nemo` is a re-release, not a doc update. So the release moment is the most
+ * recent artifact touch; when the head commit is well past it, nothing but
+ * docs/config has changed since → UPDATE. Any LFS file counts as an artifact
+ * (that's how the `.nemo` gets seen). Returns ms, or null when the tree is
+ * unreadable or holds no artifacts, in which case the caller falls back to the
+ * commit-burst heuristic.
  */
-async function fetchFirstArtifactDate(
+async function fetchLatestArtifactDate(
   item: HFItem,
   token: string | undefined
 ): Promise<number | null> {
@@ -332,7 +327,7 @@ async function fetchFirstArtifactDate(
       const ext = dot >= 0 ? path.slice(dot) : "";
       if (ARTIFACT_EXT.has(ext) || e.lfs != null) artifactDates.push(ts);
     }
-    return artifactDates.length ? Math.min(...artifactDates) : null;
+    return artifactDates.length ? Math.max(...artifactDates) : null;
   } catch {
     return null;
   }
@@ -535,9 +530,9 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
     items.map((it) => () => fetchRecentCommits(it, token)),
     12
   );
-  // …and a tree lookup, to date the release by when its weights/data landed.
+  // …and a tree lookup, to date the release by when its weights/data last landed.
   const releaseDates = await pool(
-    items.map((it) => () => fetchFirstArtifactDate(it, token)),
+    items.map((it) => () => fetchLatestArtifactDate(it, token)),
     12
   );
 
@@ -570,12 +565,12 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
     it.lastCommitBy = head?.by;
     it.avatarUrl = avatars.get(it.author);
 
-    // Preferred signal: the release is when the weights/data first landed. A
-    // repo stays a "release" through the launch-day burst (weights, then the
-    // README/config that lands hours later), and becomes an UPDATE once the
-    // head commit is more than a day past that — post-release polish, or a new
-    // weight format added later. Only fall through to the commit-burst
-    // heuristic when we couldn't read the tree.
+    // Preferred signal: a (re)release is when the weights/data were last
+    // touched. Changing the weights — including adding a new weight format to
+    // an old model — is a release. It's only an UPDATE once the head commit is
+    // more than a launch-day window past that last artifact change, i.e.
+    // nothing but README/config/recipes has moved since. Fall through to the
+    // commit-burst heuristic only when we couldn't read the tree.
     const releaseDate = releaseDates[i];
     const headDate = head ? Date.parse(head.date ?? "") : NaN;
     if (releaseDate != null && Number.isFinite(headDate)) {
