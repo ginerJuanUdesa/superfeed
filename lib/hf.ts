@@ -264,6 +264,73 @@ async function fetchRecentCommits(
   }
 }
 
+/* File extensions that ARE the release: model weights and the big binary data
+ * artifacts a dataset ships. A repo "releases" when these land; anything
+ * committed afterwards (README/model-card/recipe polish) is an UPDATE. */
+const ARTIFACT_EXT = new Set([
+  ".safetensors", ".bin", ".gguf", ".ggml", ".pt", ".pth", ".ckpt", ".onnx",
+  ".h5", ".msgpack", ".tflite", ".npz", ".pb", ".params", ".model", ".pkl",
+  ".parquet", ".arrow", // dataset artifacts
+]);
+
+/** Titles for the scaffolding that lands with the initial release (empty repo
+ * placeholder, first config/code push, the large-folder weight upload) — not
+ * meaningful "what changed" entries for an update card. */
+function isReleaseScaffoldTitle(title: string): boolean {
+  const t = title.trim().toLowerCase();
+  return (
+    t === "init" ||
+    t === "initial commit" ||
+    t.startsWith("add files using upload-large-folder") ||
+    t.startsWith("duplicate from")
+  );
+}
+
+/**
+ * The moment a repo actually shipped: the newest commit that touched a weight
+ * (or big LFS data) file. Read from the file tree, where every file carries
+ * the commit that last modified it. Returns that timestamp (ms) or null when
+ * we can't tell (tree unreadable, or no artifact files — e.g. a config-only or
+ * externally-hosted repo), in which case the caller falls back to the
+ * commit-burst heuristic. LFS files are the fallback signal when no known
+ * weight extension matches, but real weight/data extensions win so an updated
+ * example image (also LFS) can't masquerade as a fresh release.
+ */
+async function fetchReleaseArtifactDate(
+  item: HFItem,
+  token: string | undefined
+): Promise<number | null> {
+  if (item.kind === "paper") return null;
+  const url = `${HF_BASE}/api/${COMMIT_PATH[item.kind]}/${item.id}/tree/main?recursive=true&expand=true`;
+  try {
+    const res = await fetchWithRetry(url, { headers: headers(token), cache: "no-store" }, 12_000);
+    if (!res.ok) return null;
+    const raw = (await res.json()) as Array<{
+      type?: string;
+      path?: string;
+      lfs?: unknown;
+      lastCommit?: { date?: string };
+    }>;
+    if (!Array.isArray(raw)) return null;
+    const artifactDates: number[] = [];
+    const lfsDates: number[] = [];
+    for (const e of raw) {
+      if (e?.type !== "file") continue;
+      const ts = e.lastCommit?.date ? Date.parse(e.lastCommit.date) : NaN;
+      if (!Number.isFinite(ts)) continue;
+      const path = (e.path ?? "").toLowerCase();
+      const dot = path.lastIndexOf(".");
+      const ext = dot >= 0 ? path.slice(dot) : "";
+      if (ARTIFACT_EXT.has(ext)) artifactDates.push(ts);
+      else if (e.lfs != null) lfsDates.push(ts);
+    }
+    const pick = artifactDates.length ? artifactDates : lfsDates;
+    return pick.length ? Math.max(...pick) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchAuthorPapers(author: string, token: string | undefined): Promise<HFItem[]> {
   const url = `${HF_BASE}/api/users/${encodeURIComponent(author)}/papers`;
   let res: Response;
@@ -461,6 +528,11 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
     items.map((it) => () => fetchRecentCommits(it, token)),
     12
   );
+  // …and a tree lookup, to date the release by when its weights/data landed.
+  const releaseDates = await pool(
+    items.map((it) => () => fetchReleaseArtifactDate(it, token)),
+    12
+  );
 
   // Classify RELEASE vs UPDATE by finding the repo's initial-release burst
   // and asking whether the head commit is still inside it.
@@ -490,6 +562,35 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
     it.lastCommit = head?.title;
     it.lastCommitBy = head?.by;
     it.avatarUrl = avatars.get(it.author);
+
+    // Preferred signal: the release is when the weights/data landed. If the
+    // head commit is dated after that, this is post-release work → UPDATE, and
+    // the commits since the artifacts landed are what changed. Only fall
+    // through to the commit-burst heuristic when we couldn't read the tree.
+    const releaseDate = releaseDates[i];
+    const headDate = head ? Date.parse(head.date ?? "") : NaN;
+    if (releaseDate != null && Number.isFinite(headDate)) {
+      it.isUpdate = headDate > releaseDate;
+      if (it.isUpdate) {
+        const chrono = [...list].reverse(); // oldest → newest
+        const titles: string[] = [];
+        for (let j = chrono.length - 1; j >= 0; j--) {
+          const c = chrono[j];
+          if (!(Date.parse(c.date ?? "") > releaseDate)) continue;
+          const t = c.title?.trim();
+          if (!t) continue;
+          // Weights land first via the large-folder uploader, then the initial
+          // config/code lands under "init"/"initial commit" a beat later — that
+          // scaffolding is part of the release, not a change worth listing.
+          if (isReleaseScaffoldTitle(t)) continue;
+          if (titles.length && titles[titles.length - 1] === t) continue;
+          titles.push(t);
+          if (titles.length >= UPDATE_TITLES_CAP) break;
+        }
+        it.updateCommits = titles;
+      }
+      return;
+    }
 
     // A repo created via HF's "Duplicate" button gets a synthetic
     // "Duplicate from <source>" commit — it isn't user-authored content,
