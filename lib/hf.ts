@@ -265,12 +265,15 @@ async function fetchRecentCommits(
 }
 
 /* File extensions that ARE the release: model weights and the big binary data
- * artifacts a dataset ships. A repo "releases" when these land; anything
- * committed afterwards (README/model-card/recipe polish) is an UPDATE. */
+ * artifacts a dataset ships. A repo "releases" when these first land; anything
+ * committed afterwards (README/model-card/recipe polish, or a second weight
+ * format added months later) is an UPDATE. This is only a secondary signal —
+ * any LFS-tracked file counts as an artifact too, so a weight format we didn't
+ * enumerate (e.g. NeMo's `.nemo`) is still caught. */
 const ARTIFACT_EXT = new Set([
   ".safetensors", ".bin", ".gguf", ".ggml", ".pt", ".pth", ".ckpt", ".onnx",
-  ".h5", ".msgpack", ".tflite", ".npz", ".pb", ".params", ".model", ".pkl",
-  ".parquet", ".arrow", // dataset artifacts
+  ".h5", ".msgpack", ".tflite", ".npz", ".pb", ".params", ".pdparams", ".model",
+  ".pkl", ".nemo", ".parquet", ".arrow", // + dataset artifacts
 ]);
 
 /** Titles for the scaffolding that lands with the initial release (empty repo
@@ -287,16 +290,23 @@ function isReleaseScaffoldTitle(title: string): boolean {
 }
 
 /**
- * The moment a repo actually shipped: the newest commit that touched a weight
- * (or big LFS data) file. Read from the file tree, where every file carries
- * the commit that last modified it. Returns that timestamp (ms) or null when
- * we can't tell (tree unreadable, or no artifact files — e.g. a config-only or
- * externally-hosted repo), in which case the caller falls back to the
- * commit-burst heuristic. LFS files are the fallback signal when no known
- * weight extension matches, but real weight/data extensions win so an updated
- * example image (also LFS) can't masquerade as a fresh release.
+ * When a repo FIRST shipped weights/data — the oldest commit that touched an
+ * artifact file, read from the tree where every file carries the commit that
+ * last modified it. We take the oldest such date (not the newest): adding a
+ * second weight format months after launch — nvidia/canary-1b-v2 shipped
+ * `.nemo` in 2025 and added `.safetensors` a year later — is an UPDATE to an
+ * existing model, not a fresh release, so the release moment is the earliest
+ * artifact we can see. Any LFS file counts as an artifact (that's how the
+ * `.nemo` gets seen). Returns ms, or null when the tree is unreadable or holds
+ * no artifacts, in which case the caller falls back to the commit-burst
+ * heuristic.
+ *
+ * Caveat: a file's tree entry only records its LAST touch, so if the very
+ * first weights were later overwritten in place we'd see that later date. In
+ * practice initial shards are rarely re-committed, and any residual artifact
+ * from the launch (tokenizer, an original shard, a plot) still pins the date.
  */
-async function fetchReleaseArtifactDate(
+async function fetchFirstArtifactDate(
   item: HFItem,
   token: string | undefined
 ): Promise<number | null> {
@@ -313,7 +323,6 @@ async function fetchReleaseArtifactDate(
     }>;
     if (!Array.isArray(raw)) return null;
     const artifactDates: number[] = [];
-    const lfsDates: number[] = [];
     for (const e of raw) {
       if (e?.type !== "file") continue;
       const ts = e.lastCommit?.date ? Date.parse(e.lastCommit.date) : NaN;
@@ -321,11 +330,9 @@ async function fetchReleaseArtifactDate(
       const path = (e.path ?? "").toLowerCase();
       const dot = path.lastIndexOf(".");
       const ext = dot >= 0 ? path.slice(dot) : "";
-      if (ARTIFACT_EXT.has(ext)) artifactDates.push(ts);
-      else if (e.lfs != null) lfsDates.push(ts);
+      if (ARTIFACT_EXT.has(ext) || e.lfs != null) artifactDates.push(ts);
     }
-    const pick = artifactDates.length ? artifactDates : lfsDates;
-    return pick.length ? Math.max(...pick) : null;
+    return artifactDates.length ? Math.min(...artifactDates) : null;
   } catch {
     return null;
   }
@@ -530,7 +537,7 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
   );
   // …and a tree lookup, to date the release by when its weights/data landed.
   const releaseDates = await pool(
-    items.map((it) => () => fetchReleaseArtifactDate(it, token)),
+    items.map((it) => () => fetchFirstArtifactDate(it, token)),
     12
   );
 
@@ -563,14 +570,16 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
     it.lastCommitBy = head?.by;
     it.avatarUrl = avatars.get(it.author);
 
-    // Preferred signal: the release is when the weights/data landed. If the
-    // head commit is dated after that, this is post-release work → UPDATE, and
-    // the commits since the artifacts landed are what changed. Only fall
-    // through to the commit-burst heuristic when we couldn't read the tree.
+    // Preferred signal: the release is when the weights/data first landed. A
+    // repo stays a "release" through the launch-day burst (weights, then the
+    // README/config that lands hours later), and becomes an UPDATE once the
+    // head commit is more than a day past that — post-release polish, or a new
+    // weight format added later. Only fall through to the commit-burst
+    // heuristic when we couldn't read the tree.
     const releaseDate = releaseDates[i];
     const headDate = head ? Date.parse(head.date ?? "") : NaN;
     if (releaseDate != null && Number.isFinite(headDate)) {
-      it.isUpdate = headDate > releaseDate;
+      it.isUpdate = headDate - releaseDate > CLUSTER_GAP_MS;
       if (it.isUpdate) {
         const chrono = [...list].reverse(); // oldest → newest
         const titles: string[] = [];
