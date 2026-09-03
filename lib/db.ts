@@ -83,8 +83,10 @@ function open(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS hf_items_last_modified
       ON hf_items (last_modified DESC);
-    CREATE INDEX IF NOT EXISTS hf_items_sort_ms
-      ON hf_items (sort_ms DESC);
+    -- NB: the hf_items_sort_ms index is created in migrateHFSortColumn, NOT
+    -- here. On a DB that predates the sort_ms column, indexing it in this
+    -- CREATE block would throw "no such column: sort_ms" before the migration
+    -- below gets a chance to ADD it, wedging open() on every request.
     -- Persisted HF follow set. If /following pagination fails halfway,
     -- we still know which accounts to fan out to on the next sweep.
     CREATE TABLE IF NOT EXISTS hf_accounts (
@@ -93,10 +95,13 @@ function open(): Database.Database {
       updated_at INTEGER NOT NULL
     );
   `);
-  dbInstance = db;
+  // Run migrations BEFORE caching the instance: if one throws, we must not
+  // leave a half-initialized db cached in dbInstance (open() would then hand
+  // every caller a broken connection forever instead of retrying).
   migrateHFSortColumn(db);
   migrateLegacyStateFile(db);
   invalidateHFSummariesIfStale(db);
+  dbInstance = db;
   return db;
 }
 
@@ -106,9 +111,16 @@ function open(): Database.Database {
  *  for the next sweep to re-enrich. Falls back to last_modified. */
 function migrateHFSortColumn(db: Database.Database) {
   const cols = db.prepare("PRAGMA table_info(hf_items)").all() as { name: string }[];
-  if (cols.some((c) => c.name === "sort_ms")) return;
+  const ensureIndex = () =>
+    db.exec("CREATE INDEX IF NOT EXISTS hf_items_sort_ms ON hf_items (sort_ms DESC)");
+  // Fresh DBs already have the column from CREATE TABLE; just guarantee the
+  // index (which is no longer created in the init block) and skip the backfill.
+  if (cols.some((c) => c.name === "sort_ms")) {
+    ensureIndex();
+    return;
+  }
   db.exec("ALTER TABLE hf_items ADD COLUMN sort_ms INTEGER");
-  db.exec("CREATE INDEX IF NOT EXISTS hf_items_sort_ms ON hf_items (sort_ms DESC)");
+  ensureIndex();
   const rows = db
     .prepare("SELECT kind, id, last_modified AS lastModified, item_json AS itemJson FROM hf_items")
     .all() as { kind: string; id: string; lastModified: number; itemJson: string }[];
