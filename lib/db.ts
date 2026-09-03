@@ -71,6 +71,11 @@ function open(): Database.Database {
       kind          TEXT NOT NULL,
       id            TEXT NOT NULL,
       last_modified INTEGER NOT NULL,
+      -- Effective feed date: when the weights/data actually landed for a
+      -- (re)release, or last_modified for an update. This — not last_modified —
+      -- is what the card shows and what the feed is ordered/paginated by, so a
+      -- release whose head is a trailing doc commit sorts by its real drop.
+      sort_ms       INTEGER,
       is_update     INTEGER NOT NULL,
       item_json     TEXT NOT NULL,
       updated_at    INTEGER NOT NULL,
@@ -78,6 +83,8 @@ function open(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS hf_items_last_modified
       ON hf_items (last_modified DESC);
+    CREATE INDEX IF NOT EXISTS hf_items_sort_ms
+      ON hf_items (sort_ms DESC);
     -- Persisted HF follow set. If /following pagination fails halfway,
     -- we still know which accounts to fan out to on the next sweep.
     CREATE TABLE IF NOT EXISTS hf_accounts (
@@ -87,9 +94,44 @@ function open(): Database.Database {
     );
   `);
   dbInstance = db;
+  migrateHFSortColumn(db);
   migrateLegacyStateFile(db);
   invalidateHFSummariesIfStale(db);
   return db;
+}
+
+/** Add the hf_items.sort_ms column to DBs created before it existed, and seed
+ *  it from each row's effective (re)release date — read out of the stored
+ *  item_json — so the feed is correctly ordered immediately, without waiting
+ *  for the next sweep to re-enrich. Falls back to last_modified. */
+function migrateHFSortColumn(db: Database.Database) {
+  const cols = db.prepare("PRAGMA table_info(hf_items)").all() as { name: string }[];
+  if (cols.some((c) => c.name === "sort_ms")) return;
+  db.exec("ALTER TABLE hf_items ADD COLUMN sort_ms INTEGER");
+  db.exec("CREATE INDEX IF NOT EXISTS hf_items_sort_ms ON hf_items (sort_ms DESC)");
+  const rows = db
+    .prepare("SELECT kind, id, last_modified AS lastModified, item_json AS itemJson FROM hf_items")
+    .all() as { kind: string; id: string; lastModified: number; itemJson: string }[];
+  const upd = db.prepare("UPDATE hf_items SET sort_ms = ? WHERE kind = ? AND id = ?");
+  const tx = db.transaction((batch: typeof rows) => {
+    for (const r of batch) {
+      let sortMs = r.lastModified;
+      try {
+        const it = JSON.parse(r.itemJson) as {
+          isUpdate?: boolean;
+          releaseDate?: string;
+        };
+        if (!it.isUpdate && it.releaseDate) {
+          const rel = Date.parse(it.releaseDate);
+          if (Number.isFinite(rel)) sortMs = rel;
+        }
+      } catch {
+        // keep last_modified
+      }
+      upd.run(sortMs, r.kind, r.id);
+    }
+  });
+  tx(rows);
 }
 
 /** If the stored summary logic version doesn't match the current one, blow
@@ -271,14 +313,15 @@ export function deleteHFItems(rows: { kind: string; id: string }[]): void {
 }
 
 export function upsertHFItems(
-  rows: { kind: string; id: string; lastModified: number; isUpdate: boolean; itemJson: string }[]
+  rows: { kind: string; id: string; lastModified: number; sortMs: number; isUpdate: boolean; itemJson: string }[]
 ): void {
   if (rows.length === 0) return;
   const stmt = open().prepare(
-    `INSERT INTO hf_items (kind, id, last_modified, is_update, item_json, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO hf_items (kind, id, last_modified, sort_ms, is_update, item_json, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(kind, id) DO UPDATE SET
        last_modified = excluded.last_modified,
+       sort_ms       = excluded.sort_ms,
        is_update     = excluded.is_update,
        item_json     = excluded.item_json,
        updated_at    = excluded.updated_at`
@@ -286,7 +329,7 @@ export function upsertHFItems(
   const now = Date.now();
   const tx = open().transaction((batch: typeof rows) => {
     for (const r of batch) {
-      stmt.run(r.kind, r.id, r.lastModified, r.isUpdate ? 1 : 0, r.itemJson, now);
+      stmt.run(r.kind, r.id, r.lastModified, r.sortMs, r.isUpdate ? 1 : 0, r.itemJson, now);
     }
   });
   tx(rows);
@@ -297,19 +340,19 @@ export function upsertHFItems(
  *  so a followed repo is never dropped just because noisier accounts outrank it,
  *  while leaving any row a previous sweep already enriched untouched. */
 export function insertHFItemsIfAbsent(
-  rows: { kind: string; id: string; lastModified: number; isUpdate: boolean; itemJson: string }[]
+  rows: { kind: string; id: string; lastModified: number; sortMs: number; isUpdate: boolean; itemJson: string }[]
 ): void {
   if (rows.length === 0) return;
   const db = open();
   const stmt = db.prepare(
-    `INSERT INTO hf_items (kind, id, last_modified, is_update, item_json, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO hf_items (kind, id, last_modified, sort_ms, is_update, item_json, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(kind, id) DO NOTHING`
   );
   const now = Date.now();
   const tx = db.transaction((batch: typeof rows) => {
     for (const r of batch) {
-      stmt.run(r.kind, r.id, r.lastModified, r.isUpdate ? 1 : 0, r.itemJson, now);
+      stmt.run(r.kind, r.id, r.lastModified, r.sortMs, r.isUpdate ? 1 : 0, r.itemJson, now);
     }
   });
   tx(rows);
@@ -324,13 +367,17 @@ export function selectHFItems(opts: {
 }): HFItemRow[] {
   if (opts.kinds.length === 0) return [];
   const placeholders = opts.kinds.map(() => "?").join(",");
-  const sinceClause = opts.sinceMs ? "AND last_modified >= ?" : "";
-  const beforeClause = opts.beforeMs ? "AND last_modified < ?" : "";
+  // Order and paginate by the effective feed date (the real (re)release date
+  // for releases, last_modified for updates) so the list matches what each
+  // card shows. COALESCE covers rows swept before sort_ms existed.
+  const sortExpr = "COALESCE(sort_ms, last_modified)";
+  const sinceClause = opts.sinceMs ? `AND ${sortExpr} >= ?` : "";
+  const beforeClause = opts.beforeMs ? `AND ${sortExpr} < ?` : "";
   const sql = `
     SELECT kind, id, last_modified AS lastModified, is_update AS isUpdate, item_json AS itemJson
     FROM hf_items
     WHERE kind IN (${placeholders}) ${sinceClause} ${beforeClause}
-    ORDER BY last_modified DESC
+    ORDER BY ${sortExpr} DESC
     LIMIT ?
   `;
   const params: (string | number)[] = [...opts.kinds];

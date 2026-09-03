@@ -178,7 +178,12 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
   const loadMore = useCallback(async () => {
     if (loadingMore || loading || !hasMore || !items || items.length === 0) return;
     const tail = items[items.length - 1];
-    const beforeMs = Date.parse(tail.lastModified);
+    // Cursor on the same effective date the list is ordered by (release date
+    // for a (re)release, last_modified for an update) — not raw lastModified,
+    // or pagination would skip or repeat rows near the release/update boundary.
+    const tailDate =
+      !tail.isUpdate && tail.releaseDate ? tail.releaseDate : tail.lastModified;
+    const beforeMs = Date.parse(tailDate);
     if (!beforeMs) return;
     const ctrl = new AbortController();
     setLoadingMore(true);

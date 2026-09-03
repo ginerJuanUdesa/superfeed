@@ -433,6 +433,18 @@ export async function fetchFeed(opts: {
   return rows.map((r) => JSON.parse(r.itemJson) as HFItem);
 }
 
+/** The date the feed sorts and paginates by, matching what the card displays:
+ *  a (re)release shows when its weights/data landed; an update shows its last
+ *  commit. Keeping sort and display on the same clock is what stops a release
+ *  with a trailing doc commit from jumping above genuinely newer items. */
+function effectiveSortMs(it: HFItem): number {
+  if (!it.isUpdate && it.releaseDate) {
+    const rel = Date.parse(it.releaseDate);
+    if (Number.isFinite(rel)) return rel;
+  }
+  return Date.parse(it.lastModified) || 0;
+}
+
 async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
   const { user, kinds, since, perAuthorLimit = 30, token, maxItems = 80 } = opts;
 
@@ -737,6 +749,7 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
       kind: it.kind,
       id: it.id,
       lastModified: Date.parse(it.lastModified) || 0,
+      sortMs: effectiveSortMs(it),
       isUpdate: !!it.isUpdate,
       itemJson: JSON.stringify(it),
     }))
@@ -765,6 +778,7 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
         kind: it.kind,
         id: it.id,
         lastModified: Date.parse(it.lastModified) || 0,
+        sortMs: effectiveSortMs(it),
         isUpdate: !!it.isUpdate,
         itemJson: JSON.stringify(it),
       }))
