@@ -1,17 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ModuleInstance } from "@/lib/types";
-import { loadSettings } from "./SettingsModal";
+import { loadSettings } from "@/lib/settings";
+import type { ModuleDescriptor, ModuleProps } from "./types";
 import type { RedmineIssue, RedmineProject, RedmineUser } from "@/lib/redmine";
 import { useIsDark } from "@/lib/useIsDark";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
-
-interface Props {
-  module: ModuleInstance;
-  onRemove: (id: string) => void;
-  onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
-}
 
 const REFRESH_MS = 5 * 60 * 1000;
 const SUMMARY_CACHE_PREFIX = "redmine-summary:";
@@ -170,7 +164,7 @@ interface IssueSummary {
   journalCount: number;
 }
 
-export default function RedmineModule({ module, onRemove, onUpdateConfig }: Props) {
+export default function RedmineModule({ module, onRemove, onUpdateConfig }: ModuleProps) {
   const R = useIsDark() ? R_DARK : R_LIGHT;
   const selectedProjectIds = useMemo(
     () => (module.config.projectIds as number[] | undefined) ?? [],
@@ -302,7 +296,6 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
         color: R.text,
       }}
     >
-      {/* blue banner */}
       <div
         className="shrink-0 flex items-center justify-between px-2.5 gap-2 min-w-0"
         style={{
@@ -324,7 +317,6 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Prop
         </div>
       </div>
 
-      {/* body */}
       <div className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 py-2">
         {error && (
           <div
@@ -515,7 +507,6 @@ function IssueCard({ item }: { item: RedmineIssue }) {
           color: R.text,
         }}
       >
-        {/* line 1: [severity dot] + #id + subject + [NEW] + time */}
         <div className="flex items-center gap-1.5 min-w-0 text-[14px] leading-snug">
           {sevColor && (
             <span
@@ -560,7 +551,6 @@ function IssueCard({ item }: { item: RedmineIssue }) {
           </span>
         </div>
 
-        {/* line 2: author */}
         {item.author && (
           <div
             className="text-[12px] mt-0.5 pl-[22px] truncate"
@@ -570,7 +560,6 @@ function IssueCard({ item }: { item: RedmineIssue }) {
           </div>
         )}
 
-        {/* line 3: summary (or its loading/error state) */}
         {summaryText ? (
           <div
             className="text-[13px] leading-snug line-clamp-2 mt-1 pl-[22px]"
@@ -830,3 +819,31 @@ function FilterColumn({
     </div>
   );
 }
+
+/** Rail glyph: the Redmine logo if /logos/redmine.png exists, else a red "R"
+ *  tile. Lets the module ship without bundling the trademark asset. */
+function RedmineRailIcon() {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div
+        className="pointer-events-none flex items-center justify-center rounded-sm"
+        style={{ width: 24, height: 24, background: "#a01515", color: "#fff", fontWeight: 700, fontSize: 13, fontFamily: "ui-monospace, monospace" }}
+      >
+        R
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/logos/redmine.png" alt="Redmine" width={24} height={24} className="pointer-events-none" draggable={false} onError={() => setFailed(true)} />
+  );
+}
+
+export const redmineModule: ModuleDescriptor = {
+  type: "redmine",
+  label: "Redmine issues",
+  defaultTitle: "Issues",
+  RailIcon: RedmineRailIcon,
+  Component: RedmineModule,
+};

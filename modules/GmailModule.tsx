@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ModuleInstance } from "@/lib/types";
-import { loadSettings } from "./SettingsModal";
+import { loadSettings } from "@/lib/settings";
+import type { ModuleDescriptor, ModuleProps } from "./types";
 import {
   clearAllGmailClassifications,
   getGmailClassification,
@@ -13,12 +13,6 @@ import {
 import type { GmailItem } from "@/lib/gmail";
 import { useIsDark } from "@/lib/useIsDark";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
-
-interface Props {
-  module: ModuleInstance;
-  onRemove: (id: string) => void;
-  onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
-}
 
 const REFRESH_MS = 5 * 60 * 1000;
 
@@ -88,7 +82,7 @@ function relativeTime(iso: string): string {
 
 const BATCH_SIZE = 6;
 
-export default function GmailModule({ module, onRemove, onUpdateConfig }: Props) {
+export default function GmailModule({ module, onRemove, onUpdateConfig }: ModuleProps) {
   const G = useIsDark() ? G_DARK : G_LIGHT;
   const configuredAccounts = useMemo(() => {
     const s = loadSettings();
@@ -509,7 +503,6 @@ function MailRow({
           color: G.text,
         }}
       >
-        {/* line 1: dot + sender + subject + time */}
         <div className="flex items-center gap-2 min-w-0">
           <span
             className="w-1.5 h-1.5 rounded-full shrink-0"
@@ -535,9 +528,8 @@ function MailRow({
             {relativeTime(item.receivedAt)}
           </span>
         </div>
-        {/* line 2: summary/snippet, indented under the sender column so the
-             dot stays as the row's left anchor. Raw snippet renders italic
-             so it's visually distinct from LLM summaries. */}
+        {/* Indented under the sender column so the dot stays the row's left
+             anchor. Raw snippet is italic to distinguish it from an LLM summary. */}
         {snippetText && (
           <div
             className={`text-[12px] leading-snug line-clamp-2 mt-0.5 pl-[14px]${
@@ -659,3 +651,16 @@ function BurgerMenu({
     </div>
   );
 }
+
+function GmailRailIcon() {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/logos/gmail.png" alt="Gmail" width={24} height={20} className="pointer-events-none" draggable={false} />;
+}
+
+export const gmailModule: ModuleDescriptor = {
+  type: "gmail",
+  label: "Gmail inbox",
+  defaultTitle: "Inbox",
+  RailIcon: GmailRailIcon,
+  Component: GmailModule,
+};

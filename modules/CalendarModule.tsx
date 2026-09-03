@@ -1,17 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ModuleInstance } from "@/lib/types";
-import { loadSettings } from "./SettingsModal";
+import { loadSettings } from "@/lib/settings";
+import type { ModuleDescriptor, ModuleProps } from "./types";
 import type { CalendarEvent } from "@/lib/calendar";
 import { useIsDark } from "@/lib/useIsDark";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
-
-interface Props {
-  module: ModuleInstance;
-  onRemove: (id: string) => void;
-  onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
-}
 
 const REFRESH_MS = 5 * 60 * 1000;
 
@@ -86,7 +80,7 @@ function fmtTime(ev: CalendarEvent): string {
   return `${s}–${e}`;
 }
 
-export default function CalendarModule({ module, onRemove, onUpdateConfig }: Props) {
+export default function CalendarModule({ module, onRemove, onUpdateConfig }: ModuleProps) {
   const C = useIsDark() ? C_DARK : C_LIGHT;
   const configuredAccounts = useMemo(() => {
     const s = loadSettings();
@@ -430,3 +424,16 @@ function BurgerMenu({
     </div>
   );
 }
+
+function CalendarRailIcon() {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/logos/calendar.png" alt="Google Calendar" width={24} height={24} className="pointer-events-none" draggable={false} />;
+}
+
+export const calendarModule: ModuleDescriptor = {
+  type: "calendar",
+  label: "Google Calendar",
+  defaultTitle: "Upcoming",
+  RailIcon: CalendarRailIcon,
+  Component: CalendarModule,
+};

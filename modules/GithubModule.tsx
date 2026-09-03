@@ -12,8 +12,8 @@ import {
   Star,
   Warning,
 } from "@phosphor-icons/react";
-import { ModuleInstance } from "@/lib/types";
-import { loadSettings } from "./SettingsModal";
+import { loadSettings } from "@/lib/settings";
+import type { ModuleDescriptor, ModuleProps } from "./types";
 import type {
   GithubItem,
   GithubItemKind,
@@ -23,12 +23,6 @@ import type {
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
 import { useIsDark } from "@/lib/useIsDark";
 import { getSummary, keyFor, preloadSummaries, setSummary } from "@/lib/summaryCache";
-
-interface Props {
-  module: ModuleInstance;
-  onRemove: (id: string) => void;
-  onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
-}
 
 const REFRESH_MS = 5 * 60 * 1000;
 
@@ -143,7 +137,7 @@ function StateChip({ state, kind }: { state: GithubItemState; kind: GithubItemKi
   );
 }
 
-export default function GithubModule({ module, onRemove, onUpdateConfig }: Props) {
+export default function GithubModule({ module, onRemove, onUpdateConfig }: ModuleProps) {
   const GH = useGHPalette();
   // Feed on by default; PRs opt-in. `undefined` means never-touched → default.
   const showFeed = module.config.showFeed !== false;
@@ -683,7 +677,6 @@ function FeedCard({ item }: { item: GithubItem }) {
         className="rounded-md overflow-hidden"
         style={{ background: GH.cardBg, border: `1px solid ${GH.border}` }}
       >
-        {/* Header: actor · action · repo · time */}
         <div className="flex items-start gap-2.5 px-3.5 pt-3">
           <div className="relative shrink-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -694,7 +687,6 @@ function FeedCard({ item }: { item: GithubItem }) {
               draggable={false}
               style={{ background: GH.cardInnerBg }}
             />
-            {/* small kind badge over the avatar corner, GH-style */}
             <span
               className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center"
               style={{ background: GH.headerBg, border: `1px solid ${GH.border}` }}
@@ -730,7 +722,6 @@ function FeedCard({ item }: { item: GithubItem }) {
           </div>
         </div>
 
-        {/* Body: title + state + description */}
         <div className="px-3.5 pt-2.5 pb-3">
           <a
             href={item.url}
@@ -767,3 +758,16 @@ function FeedCard({ item }: { item: GithubItem }) {
     </li>
   );
 }
+
+function GithubRailIcon() {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/logos/github.png" alt="GitHub" width={24} height={24} className="pointer-events-none" style={{ filter: "invert(1)" }} draggable={false} />;
+}
+
+export const githubModule: ModuleDescriptor = {
+  type: "github",
+  label: "GitHub feed",
+  defaultTitle: "Feed",
+  RailIcon: GithubRailIcon,
+  Component: GithubModule,
+};

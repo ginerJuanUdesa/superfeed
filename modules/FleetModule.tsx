@@ -1,18 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ModuleInstance } from "@/lib/types";
-import { loadSettings } from "./SettingsModal";
+import { loadSettings } from "@/lib/settings";
+import type { ModuleDescriptor, ModuleProps } from "./types";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
 import { useIsDark } from "@/lib/useIsDark";
 import { SETTINGS_CHANGED_EVENT } from "@/lib/clientState";
 import type { FleetProbeResult, FleetServerResult } from "@/lib/fleet";
-
-interface Props {
-  module: ModuleInstance;
-  onRemove: (id: string) => void;
-  onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
-}
 
 // Fleet probes are cheap (a TCP SYN each). Polling faster than this just adds
 // noise; slower makes an "is my server down" glance stale.
@@ -47,7 +41,7 @@ const F_DARK = {
  *           or the host is off — we can't tell from here) */
 const DOT = { up: "#22c55e", down: "#ef4444", unreachable: "#eab308" };
 
-export default function FleetModule({ module, onRemove }: Props) {
+export default function FleetModule({ module, onRemove }: ModuleProps) {
   const F = useIsDark() ? F_DARK : F_LIGHT;
   // Read from the settings cache on every render (cheap: an in-memory map).
   // A settings edit dispatches SETTINGS_CHANGED_EVENT, which triggers a
@@ -394,3 +388,24 @@ function EndpointRow({
     </li>
   );
 }
+
+/** Inline "server rack" glyph for the Fleet rail tile — no external asset. */
+function FleetRailIcon() {
+  return (
+    <svg width={24} height={24} viewBox="0 0 24 24" className="pointer-events-none" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round">
+      <rect x="3.5" y="4" width="17" height="5" rx="1.2" />
+      <rect x="3.5" y="10.5" width="17" height="5" rx="1.2" />
+      <rect x="3.5" y="17" width="17" height="3.5" rx="1" />
+      <circle cx="17.5" cy="6.5" r="0.8" fill="currentColor" stroke="none" />
+      <circle cx="17.5" cy="13" r="0.8" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export const fleetModule: ModuleDescriptor = {
+  type: "fleet",
+  label: "Fleet status",
+  defaultTitle: "Fleet",
+  RailIcon: FleetRailIcon,
+  Component: FleetModule,
+};

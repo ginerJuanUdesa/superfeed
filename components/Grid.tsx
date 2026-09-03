@@ -4,8 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { Layout, WidthProvider } from "react-grid-layout";
 import { GearSix, SquaresFour } from "@phosphor-icons/react";
 import Module from "./Module";
-import SettingsModal, { applyThemeMode, loadSettings } from "./SettingsModal";
-import { HFKind, ModuleInstance, ModuleType } from "@/lib/types";
+import SettingsModal from "./SettingsModal";
+import { applyThemeMode, loadSettings } from "@/lib/settings";
+import { ModuleInstance, ModuleType } from "@/lib/types";
+import { MODULES, getModule } from "@/modules/registry";
+import type { ModuleDescriptor } from "@/modules/types";
 import { flushPending, getCachedGrid, hydrate, saveGrid } from "@/lib/clientState";
 import { useIsMobile } from "@/lib/useIsMobile";
 
@@ -248,28 +251,11 @@ export default function Grid() {
       return;
     }
     const { wantX, wantY } = wantCoordsFromEvent(e);
+    const descriptor = getModule(type);
+    if (!descriptor) return;
     const id = makeId();
-    const title =
-      type === "gmail"
-        ? "Inbox"
-        : type === "calendar"
-        ? "Upcoming"
-        : type === "github"
-        ? "Feed"
-        : type === "fleet"
-        ? "Fleet"
-        : type === "media"
-        ? "Media"
-        : "HF Feed";
-    const allKinds = ["model", "dataset", "space", "paper"] as HFKind[];
-    // Both module types default to "everything included": HF gets all four
-    // kinds ticked in both columns; Gmail relies on excludedAccountLabels
-    // being absent to auto-tick every currently- and future-configured
-    // account.
-    const config =
-      type === "hf"
-        ? { releaseKinds: allKinds, updateKinds: allKinds }
-        : {};
+    const title = descriptor.defaultTitle;
+    const config = descriptor.defaultConfig?.() ?? {};
     setModules((prev) => [...prev, { id, type, title, config }]);
     setLayout((prev) => {
       const slot = findFreeSlot(prev, wantX, wantY);
@@ -295,9 +281,8 @@ export default function Grid() {
   }
 
   if (isMobile) {
-    // Media (image/GIF) panels are decorative and don't belong on the phone
-    // carousel — hide them there. They stay on the desktop grid.
-    const mobileModules = modules.filter((m) => m.type !== "media");
+    // Some panels opt out of the phone carousel (e.g. decorative Media).
+    const mobileModules = modules.filter((m) => !getModule(m.type)?.mobileHidden);
     const mobileIds = new Set(mobileModules.map((m) => m.id));
     const mobileLayout = layout.filter((l) => mobileIds.has(l.i));
     return (
@@ -373,13 +358,9 @@ function Toolbar({
         <GearSix size={20} weight="regular" />
       </RailButton>
       <div className="w-6 h-px bg-[var(--border)] my-1" />
-      <DraggableTile type="hf" onDragStart={onDragStart} />
-      <DraggableTile type="gmail" onDragStart={onDragStart} />
-      <DraggableTile type="calendar" onDragStart={onDragStart} />
-      <DraggableTile type="github" onDragStart={onDragStart} />
-      <DraggableTile type="redmine" onDragStart={onDragStart} />
-      <DraggableTile type="fleet" onDragStart={onDragStart} />
-      <DraggableTile type="media" onDragStart={onDragStart} />
+      {MODULES.map((descriptor) => (
+        <DraggableTile key={descriptor.type} descriptor={descriptor} onDragStart={onDragStart} />
+      ))}
     </div>
   );
 }
@@ -405,135 +386,26 @@ function RailButton({
 }
 
 function DraggableTile({
-  type,
+  descriptor,
   onDragStart,
 }: {
-  type: ModuleType;
+  descriptor: ModuleDescriptor;
   onDragStart: (t: ModuleType) => void;
 }) {
-  const label =
-    type === "gmail"
-      ? "Gmail inbox"
-      : type === "calendar"
-      ? "Google Calendar"
-      : type === "github"
-      ? "GitHub feed"
-      : type === "redmine"
-      ? "Redmine issues"
-      : type === "fleet"
-      ? "Fleet status"
-      : type === "media"
-      ? "Media (image / GIF)"
-      : "HuggingFace feed";
+  const { RailIcon } = descriptor;
   return (
     <div
       className="rail-item w-10 h-10 flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
       draggable
       unselectable="on"
       onDragStart={(e) => {
-        onDragStart(type);
+        onDragStart(descriptor.type);
         e.dataTransfer.setData("text/plain", "");
       }}
-      title={`Drag to add a ${label} module`}
+      title={`Drag to add a ${descriptor.label} module`}
     >
-      {type === "gmail" ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src="/logos/gmail.png" alt="Gmail" width={24} height={20} className="pointer-events-none" draggable={false} />
-      ) : type === "calendar" ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src="/logos/calendar.png" alt="Google Calendar" width={24} height={24} className="pointer-events-none" draggable={false} />
-      ) : type === "github" ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src="/logos/github.png" alt="GitHub" width={24} height={24} className="pointer-events-none" style={{ filter: "invert(1)" }} draggable={false} />
-      ) : type === "redmine" ? (
-        <RedmineTileIcon />
-      ) : type === "fleet" ? (
-        <FleetTileIcon />
-      ) : type === "media" ? (
-        <MediaTileIcon />
-      ) : (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src="/logos/hf.png" alt="HuggingFace" width={28} height={28} className="pointer-events-none" draggable={false} />
-      )}
+      <RailIcon />
     </div>
-  );
-}
-
-/** Inline "server rack" glyph for the Fleet rail tile — no external asset. */
-function FleetTileIcon() {
-  return (
-    <svg
-      width={24}
-      height={24}
-      viewBox="0 0 24 24"
-      className="pointer-events-none"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinecap="round"
-    >
-      <rect x="3.5" y="4" width="17" height="5" rx="1.2" />
-      <rect x="3.5" y="10.5" width="17" height="5" rx="1.2" />
-      <rect x="3.5" y="17" width="17" height="3.5" rx="1" />
-      <circle cx="17.5" cy="6.5" r="0.8" fill="currentColor" stroke="none" />
-      <circle cx="17.5" cy="13" r="0.8" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-/** Inline "picture frame" glyph for the Media rail tile — no external asset. */
-function MediaTileIcon() {
-  return (
-    <svg
-      width={24}
-      height={24}
-      viewBox="0 0 24 24"
-      className="pointer-events-none"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinejoin="round"
-    >
-      <rect x="3.5" y="4.5" width="17" height="15" rx="1.6" />
-      <circle cx="8.5" cy="9.5" r="1.4" fill="currentColor" stroke="none" />
-      <path d="M4 17l4.5-5 3.5 3.5L15 12l5 5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/** Placeholder for the Redmine rail tile: swaps to /logos/redmine.png the
- *  moment that file is dropped in, without changing any wiring. */
-function RedmineTileIcon() {
-  const [failed, setFailed] = useState(false);
-  if (failed) {
-    return (
-      <div
-        className="pointer-events-none flex items-center justify-center rounded-sm"
-        style={{
-          width: 24,
-          height: 24,
-          background: "#a01515",
-          color: "#fff",
-          fontWeight: 700,
-          fontSize: 13,
-          fontFamily: "ui-monospace, monospace",
-        }}
-      >
-        R
-      </div>
-    );
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src="/logos/redmine.png"
-      alt="Redmine"
-      width={24}
-      height={24}
-      className="pointer-events-none"
-      draggable={false}
-      onError={() => setFailed(true)}
-    />
   );
 }
 
@@ -674,7 +546,6 @@ function MobileCarousel({
           </div>
         ))}
       </div>
-      {/* page indicator */}
       <div className="pointer-events-none absolute bottom-2 left-0 right-0 flex justify-center gap-1.5">
         {ordered.map((m, i) => (
           <span

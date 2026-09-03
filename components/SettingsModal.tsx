@@ -1,113 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  getCachedSettings,
-  saveSettings as pushSettings,
-} from "@/lib/clientState";
+import { saveSettings as pushSettings } from "@/lib/clientState";
 import type { FleetEndpoint, FleetServer } from "@/lib/fleet";
-
-export interface GmailAccount {
-  label: string;
-  refreshToken: string;
-  clientId: string;
-  clientSecret: string;
-}
-
-export type ThemeMode = "system" | "light" | "dark";
-
-export interface Settings {
-  startDate: string;
-  themeMode: ThemeMode;
-  gmailAccounts: GmailAccount[];
-  /** Legacy: pre-per-account shared OAuth client. Backfilled into accounts. */
-  gmailClientId?: string;
-  gmailClientSecret?: string;
-  /** Legacy: single-account refresh token. Migrated to gmailAccounts[0]. */
-  gmailRefreshToken?: string;
-  hfUsername: string;
-  hfToken: string;
-  githubUsername: string;
-  githubToken: string;
-  anthropicApiKey: string;
-  localLlmUrl: string;
-  localLlmModel: string;
-  fleetEndpoints: FleetEndpoint[];
-  fleetServers: FleetServer[];
-}
-
-const EMPTY: Settings = {
-  startDate: "",
-  themeMode: "system",
-  gmailAccounts: [],
-  hfUsername: "",
-  hfToken: "",
-  githubUsername: "",
-  githubToken: "",
-  anthropicApiKey: "",
-  localLlmUrl: "",
-  localLlmModel: "",
-  fleetEndpoints: [],
-  fleetServers: [],
-};
+import {
+  applyThemeMode,
+  EMPTY_SETTINGS,
+  GmailAccount,
+  loadSettings,
+  migrateSettings,
+  Settings,
+  ThemeMode,
+} from "@/lib/settings";
 
 function todayISO() {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-/**
- * Read the current settings from the in-memory cache. The cache is populated
- * once at app boot via `hydrate()` — before that, callers get EMPTY.
- * Same shape-migration logic as before (legacy shared OAuth client → per-account).
- */
-export function loadSettings(): Settings {
-  const raw = getCachedSettings<Partial<Settings> | null>();
-  if (!raw) return EMPTY;
-  const parsed = { ...EMPTY, ...raw } as Settings;
-  const sharedId = parsed.gmailClientId ?? "";
-  const sharedSecret = parsed.gmailClientSecret ?? "";
-  if (!parsed.gmailAccounts?.length && parsed.gmailRefreshToken) {
-    parsed.gmailAccounts = [
-      {
-        label: "primary",
-        refreshToken: parsed.gmailRefreshToken,
-        clientId: sharedId,
-        clientSecret: sharedSecret,
-      },
-    ];
-  }
-  parsed.gmailAccounts ??= [];
-  parsed.gmailAccounts = parsed.gmailAccounts.map((a) => ({
-    label: a.label ?? "",
-    refreshToken: a.refreshToken ?? "",
-    clientId: a.clientId || sharedId || "",
-    clientSecret: a.clientSecret || sharedSecret || "",
-  }));
-  parsed.themeMode ??= "system";
-  parsed.fleetEndpoints ??= [];
-  parsed.fleetServers ??= [];
-  return parsed;
-}
-
-function saveSettings(s: Settings) {
-  pushSettings(s);
-}
-
-/**
- * Reflect the user's theme preference onto the document root. "system" clears
- * the attribute so CSS `prefers-color-scheme` decides; "light" / "dark" force
- * the palette regardless of OS setting.
- */
-export function applyThemeMode(mode: ThemeMode) {
-  if (typeof document === "undefined") return;
-  const root = document.documentElement;
-  if (mode === "system") {
-    root.removeAttribute("data-theme");
-  } else {
-    root.setAttribute("data-theme", mode);
-  }
 }
 
 export default function SettingsModal({
@@ -117,7 +26,7 @@ export default function SettingsModal({
   open: boolean;
   onClose: () => void;
 }) {
-  const [settings, setSettings] = useState<Settings>(EMPTY);
+  const [settings, setSettings] = useState<Settings>(EMPTY_SETTINGS);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -154,7 +63,7 @@ export default function SettingsModal({
   };
 
   const save = () => {
-    saveSettings(settings);
+    pushSettings(settings);
     applyThemeMode(settings.themeMode);
     setDirty(false);
     onClose();
@@ -480,35 +389,10 @@ function exportSettings(s: Settings) {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-/** Merge an untrusted JSON blob into a full Settings shape by starting from
- *  EMPTY, layering the blob on top, and re-running loadSettings' migrations
- *  so legacy exports (pre per-account creds, etc.) still land in a valid state. */
+/** Parse a backup JSON blob into a full Settings shape, re-running the same
+ *  migrations as a normal read so legacy exports still land valid. */
 function parseImported(raw: string): Settings {
-  const parsed = JSON.parse(raw) as Partial<Settings>;
-  const base: Settings = { ...EMPTY, ...parsed };
-  const sharedId = base.gmailClientId ?? "";
-  const sharedSecret = base.gmailClientSecret ?? "";
-  if (!base.gmailAccounts?.length && base.gmailRefreshToken) {
-    base.gmailAccounts = [
-      {
-        label: "primary",
-        refreshToken: base.gmailRefreshToken,
-        clientId: sharedId,
-        clientSecret: sharedSecret,
-      },
-    ];
-  }
-  base.gmailAccounts ??= [];
-  base.gmailAccounts = base.gmailAccounts.map((a) => ({
-    label: a.label ?? "",
-    refreshToken: a.refreshToken ?? "",
-    clientId: a.clientId || sharedId || "",
-    clientSecret: a.clientSecret || sharedSecret || "",
-  }));
-  base.themeMode ??= "system";
-  base.fleetEndpoints ??= [];
-  base.fleetServers ??= [];
-  return base;
+  return migrateSettings(JSON.parse(raw) as Partial<Settings>);
 }
 
 function BackupField({

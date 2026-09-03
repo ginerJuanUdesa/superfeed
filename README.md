@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# superfeed
 
-## Getting Started
+A self-hosted, modular dashboard that pulls your scattered feeds into one draggable grid.
+Each panel is a **module** — Hugging Face activity, Gmail, Google Calendar, GitHub, Redmine, a fleet status board, or a plain image — and every module is a self-contained plugin you can drop in and register in one line.
 
-First, run the development server:
+Version `0.1`.
+
+## What it looks like
+
+A right-hand rail holds one tile per registered module.
+Drag a tile onto the canvas to add an instance; drag and resize instances freely; the layout and each module's config are persisted server-side (SQLite under `.local/`) so every device that opens the deployment sees the same board.
+On a phone the grid collapses into a full-screen, swipeable carousel.
+
+Modules that summarize (Hugging Face, GitHub PRs, Gmail, Redmine) can call either the Anthropic API or a local OpenAI-compatible LLM — configured in **Settings**, never committed.
+
+## Quick start
+
+### Development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+./run.sh          # installs deps if needed, then next dev on :3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000), click the gear to open **Settings**, and fill in the accounts and tokens for the modules you want.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Docker
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+docker network create apps        # one-time, shared external network
+docker compose up -d --build
+```
 
-## Learn More
+Host-side configuration lives in two ignored files:
 
-To learn more about Next.js, take a look at the following resources:
+- `.env.local` — server env such as `REDMINE_URL` / `LOCAL_LLM_API_KEY`.
+- `.local/` — the SQLite state volume (settings, grid layout, cached summaries). Persisted across rebuilds.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Configuration
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Everything user-facing is set through the in-app **Settings** modal and stored server-side, not in env:
 
-## Deploy on Vercel
+- **General** — feed start date and light/dark/system theme.
+- **Gmail** — one OAuth client (id, secret, refresh token) per account. Calendar reuses the same accounts.
+- **Hugging Face / GitHub** — username drives the feed; a token unlocks private activity.
+- **LLM** — an Anthropic key or a local OpenAI-compatible URL for summaries.
+- **Fleet** — servers (whole machines) and services (host:port) to probe.
+- **Backup** — export/import all settings as JSON.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Layout
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+app/                 Next.js App Router — the shell and every /api/<module>/ route
+components/          Grid, Module dispatcher, Settings modal
+modules/             One file per module + the registry (see MODULES.md)
+lib/                 Shared client + server helpers (settings, db, per-module data layers)
+```
+
+## Adding your own module
+
+Modules are the whole point.
+A module is a React panel plus an optional server route, wired in through a single descriptor.
+See **[MODULES.md](./MODULES.md)** for the full guide and a minimal copy-paste example.
+
+## Built with
+
+Next.js, React, Tailwind, `react-grid-layout`, `better-sqlite3`, and `@phosphor-icons/react`.
+
+## License
+
+[MIT](./LICENSE).

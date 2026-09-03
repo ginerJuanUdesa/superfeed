@@ -7,8 +7,9 @@ import {
   Database,
   Rocket,
 } from "@phosphor-icons/react";
-import { HF_KINDS, HFKind, ModuleInstance } from "@/lib/types";
-import { loadSettings } from "./SettingsModal";
+import { HF_KINDS, HFKind } from "@/lib/types";
+import { loadSettings } from "@/lib/settings";
+import type { ModuleDescriptor, ModuleProps } from "./types";
 import { getSummary, keyFor, preloadSummaries, setSummary } from "@/lib/summaryCache";
 import type { HFItem } from "@/lib/hf";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
@@ -16,12 +17,6 @@ import { useIsDark } from "@/lib/useIsDark";
 
 // Aligned with the HF feed's server cache TTL — polling faster just re-serves cached items.
 const REFRESH_MS = 5 * 60 * 1000;
-
-interface Props {
-  module: ModuleInstance;
-  onRemove: (id: string) => void;
-  onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
-}
 
 /* HuggingFace palette, quoted verbatim from huggingface.co so the module
  * reads like an embedded slice of the real site — dark in dark mode, white
@@ -87,7 +82,7 @@ function relativeTime(iso: string): string {
   return `${years}y ago`;
 }
 
-export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
+export default function HFModule({ module, onRemove, onUpdateConfig }: ModuleProps) {
   const HF = useHFPalette();
   const kindsKey = JSON.stringify(module.config.kinds ?? null);
   const releaseKindsKey = JSON.stringify(module.config.releaseKinds ?? null);
@@ -379,7 +374,6 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
                     className="block"
                     draggable={false}
                   >
-                    {/* HF's feed row header: avatar + author verb kind · time */}
                     <div
                       className="flex items-center gap-1.5 mb-1.5 text-[11px] min-w-0"
                       style={{ color: HF.textMuted }}
@@ -430,7 +424,6 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
                       </span>
                     </div>
 
-                    {/* HF's repo card: icon tile + title + subline */}
                     <div
                       className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg transition-colors group-hover/hf:border-[#2f374a]"
                       style={{
@@ -667,3 +660,19 @@ function KindSection({
     </>
   );
 }
+
+function HFRailIcon() {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/logos/hf.png" alt="HuggingFace" width={28} height={28} className="pointer-events-none" draggable={false} />;
+}
+
+const ALL_HF_KINDS: HFKind[] = ["model", "dataset", "space", "paper"];
+
+export const hfModule: ModuleDescriptor = {
+  type: "hf",
+  label: "HuggingFace feed",
+  defaultTitle: "HF Feed",
+  defaultConfig: () => ({ releaseKinds: ALL_HF_KINDS, updateKinds: ALL_HF_KINDS }),
+  RailIcon: HFRailIcon,
+  Component: HFModule,
+};

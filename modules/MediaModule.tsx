@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ModuleInstance, MediaConfig } from "@/lib/types";
 import { useIsDark } from "@/lib/useIsDark";
+import type { ModuleDescriptor, ModuleProps } from "./types";
 
-interface Props {
-  module: ModuleInstance;
-  onRemove: (id: string) => void;
-  onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
+interface MediaConfig {
+  /** Data URL (from a picked file) or an http(s) URL. */
+  src?: string;
+  /** How the image fills the module. Defaults to "contain". */
+  fit?: "cover" | "contain";
 }
 
 /* The whole panel is the media, no header, no chrome. Hover reveals the
@@ -38,7 +39,7 @@ async function uploadMedia(file: File): Promise<string> {
   return j.url;
 }
 
-export default function MediaModule({ module, onRemove, onUpdateConfig }: Props) {
+export default function MediaModule({ module, onRemove, onUpdateConfig }: ModuleProps) {
   const cfg = module.config as MediaConfig;
   const src = cfg.src;
   const fit = cfg.fit ?? "contain";
@@ -294,3 +295,23 @@ function BurgerMenu({
     </div>
   );
 }
+
+/** Inline "picture frame" glyph for the Media rail tile — no external asset. */
+function MediaRailIcon() {
+  return (
+    <svg width={24} height={24} viewBox="0 0 24 24" className="pointer-events-none" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="1.6" />
+      <circle cx="8.5" cy="9.5" r="1.4" fill="currentColor" stroke="none" />
+      <path d="M4 17l4.5-5 3.5 3.5L15 12l5 5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export const mediaModule: ModuleDescriptor = {
+  type: "media",
+  label: "Media (image / GIF)",
+  defaultTitle: "Media",
+  RailIcon: MediaRailIcon,
+  Component: MediaModule,
+  mobileHidden: true,
+};
