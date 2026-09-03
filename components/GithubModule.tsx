@@ -14,7 +14,12 @@ import {
 } from "@phosphor-icons/react";
 import { ModuleInstance } from "@/lib/types";
 import { loadSettings } from "./SettingsModal";
-import type { GithubItem, GithubItemKind, GithubItemState } from "@/lib/github";
+import type {
+  GithubItem,
+  GithubItemKind,
+  GithubItemState,
+  GithubReviewDecision,
+} from "@/lib/github";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
 import { useIsDark } from "@/lib/useIsDark";
 
@@ -501,8 +506,27 @@ function ViewMenu({
   );
 }
 
-/* Minimal card for the user's own open PRs — no avatar/actor, since every row
- * is theirs. Repo, title + state, a one-line gist, and when it was opened. */
+function ReviewChip({ decision }: { decision: GithubReviewDecision }) {
+  const GH = useGHPalette();
+  if (!decision) return null;
+  const map = {
+    APPROVED: { label: "Approved", c: GH.open },
+    CHANGES_REQUESTED: { label: "Changes requested", c: GH.closed },
+    REVIEW_REQUIRED: { label: "Review required", c: GH.draft },
+  } as const;
+  const { label, c } = map[decision];
+  return (
+    <span
+      className="inline-flex items-center rounded-full px-2 py-[2px] text-[11px] font-medium whitespace-nowrap"
+      style={{ background: `${c.bg}22`, color: c.bg, border: `1px solid ${c.bg}55` }}
+    >
+      {label}
+    </span>
+  );
+}
+
+/* Minimal card for the user's own open PRs. Small author pfp, repo, title +
+ * state, a one-line gist, and when it was opened. */
 function PRCard({ item }: { item: GithubItem }) {
   const GH = useGHPalette();
   return (
@@ -513,33 +537,50 @@ function PRCard({ item }: { item: GithubItem }) {
         rel="noreferrer noopener"
         draggable={false}
         onMouseDown={(e) => e.stopPropagation()}
-        className="no-drag block rounded-md px-2.5 py-2 transition-colors hover:brightness-110"
+        className="no-drag flex gap-2.5 rounded-md px-2.5 py-2 transition-colors hover:brightness-110"
         style={{ background: GH.cardBg, border: `1px solid ${GH.border}` }}
       >
-        <div className="flex items-center gap-2">
-          <span className="min-w-0 truncate mono text-[11px]" style={{ color: GH.textMuted }}>
-            {item.repo}
-          </span>
-          <span className="ml-auto shrink-0">
-            <StateChip state={item.state} kind={item.kind} />
-          </span>
-        </div>
-        <div className="mt-1 text-[13px] font-semibold leading-snug" style={{ color: GH.text }}>
-          {item.title}
-          {typeof item.number === "number" && (
-            <span style={{ color: GH.textFaint }}>{" "}#{item.number}</span>
-          )}
-        </div>
-        {item.body && (
-          <div
-            className="mt-0.5 text-[12px] leading-snug line-clamp-2"
-            style={{ color: GH.textMuted }}
-          >
-            {item.body}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={item.actorAvatar}
+          alt=""
+          className="w-6 h-6 rounded-full shrink-0 mt-0.5"
+          draggable={false}
+          style={{ background: GH.cardInnerBg }}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 truncate mono text-[11px]" style={{ color: GH.textMuted }}>
+              {item.repo}
+            </span>
+            <span className="ml-auto shrink-0">
+              <StateChip state={item.state} kind={item.kind} />
+            </span>
           </div>
-        )}
-        <div className="mt-1 text-[11px]" style={{ color: GH.textFaint }}>
-          opened {relativeTime(item.createdAt)}
+          <div className="mt-1 text-[13px] font-semibold leading-snug" style={{ color: GH.text }}>
+            {item.title}
+            {typeof item.number === "number" && (
+              <span style={{ color: GH.textFaint }}>{" "}#{item.number}</span>
+            )}
+          </div>
+          {item.body && (
+            <div
+              className="mt-0.5 text-[12px] leading-snug line-clamp-2"
+              style={{ color: GH.textMuted }}
+            >
+              {item.body}
+            </div>
+          )}
+          <div className="mt-1 flex items-center gap-2">
+            <span className="text-[11px]" style={{ color: GH.textFaint }}>
+              opened {relativeTime(item.createdAt)}
+            </span>
+            {item.reviewDecision && (
+              <span className="ml-auto shrink-0">
+                <ReviewChip decision={item.reviewDecision} />
+              </span>
+            )}
+          </div>
         </div>
       </a>
     </li>

@@ -11,6 +11,14 @@ export type GithubItemKind =
 
 export type GithubItemState = "open" | "closed" | "merged" | "draft" | null;
 
+/** PR review outcome, from GitHub's `reviewDecision`. Only populated for the
+ *  user's own open PRs, and only when a token is present (GraphQL needs auth). */
+export type GithubReviewDecision =
+  | "APPROVED"
+  | "CHANGES_REQUESTED"
+  | "REVIEW_REQUIRED"
+  | null;
+
 export interface GithubItem {
   /** Event id from the GH API — stable per event, safe to key on. */
   id: string;
@@ -33,6 +41,8 @@ export interface GithubItem {
   /** Landing url for the primary thing. */
   url: string;
   createdAt: string;
+  /** PR review outcome — only set for the user's own open PRs (needs a token). */
+  reviewDecision?: GithubReviewDecision;
 }
 
 const GH_BASE = "https://api.github.com";
@@ -273,6 +283,7 @@ const feedCache = new Map<string, { at: number; items: GithubItem[]; hasMore: bo
 
 interface RawSearchItem {
   id: number;
+  node_id: string;
   number: number;
   title: string;
   html_url: string;
@@ -312,7 +323,8 @@ export async function fetchOpenPRs(opts: {
     throw new Error(`GitHub PR search failed (${res.status}): ${text.slice(0, 200)}`);
   }
   const data = (await res.json()) as { items?: RawSearchItem[] };
-  const items: GithubItem[] = (data.items ?? []).map((it) => {
+  const raw = data.items ?? [];
+  const items: GithubItem[] = raw.map((it) => {
     const repo = it.repository_url.replace(`${GH_BASE}/repos/`, "");
     return {
       id: `pr-${it.id}`,
@@ -332,8 +344,46 @@ export async function fetchOpenPRs(opts: {
     };
   });
 
+  // Enrich with review decision (Approved / Changes requested / Review
+  // required). GraphQL exposes it as one field; REST search doesn't. Needs a
+  // token, so public/no-token callers just keep the plain Open/Draft state.
+  if (token && raw.length) {
+    try {
+      const decisions = await fetchReviewDecisions(raw.map((it) => it.node_id), token);
+      for (let i = 0; i < items.length; i++) {
+        items[i].reviewDecision = decisions[raw[i].node_id] ?? null;
+      }
+    } catch {
+      // Best-effort — a GraphQL hiccup shouldn't drop the whole PR list.
+    }
+  }
+
   prCache.set(cacheKey, { at: Date.now(), items });
   return items;
+}
+
+/** Batch-fetch `reviewDecision` for a set of PR node ids in one GraphQL call. */
+async function fetchReviewDecisions(
+  nodeIds: string[],
+  token: string
+): Promise<Record<string, GithubReviewDecision>> {
+  const query = `query($ids:[ID!]!){nodes(ids:$ids){... on PullRequest{id reviewDecision}}}`;
+  const res = await fetch(`${GH_BASE}/graphql`, {
+    method: "POST",
+    headers: { ...headers(token), "content-type": "application/json" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+    body: JSON.stringify({ query, variables: { ids: nodeIds } }),
+  });
+  if (!res.ok) throw new Error(`GraphQL reviewDecision failed (${res.status})`);
+  const json = (await res.json()) as {
+    data?: { nodes?: ({ id: string; reviewDecision: GithubReviewDecision } | null)[] };
+  };
+  const out: Record<string, GithubReviewDecision> = {};
+  for (const n of json.data?.nodes ?? []) {
+    if (n) out[n.id] = n.reviewDecision;
+  }
+  return out;
 }
 
 export async function fetchFeed(opts: {
