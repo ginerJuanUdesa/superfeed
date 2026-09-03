@@ -563,6 +563,11 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
   // 24h absorbs day-after README polish / arXiv citation adds as part of the
   // initial release; real follow-up updates land days or weeks later.
   const CLUSTER_GAP_MS = 24 * 60 * 60 * 1000;
+  // A repo whose head commit is still within this window of its creation counts
+  // as a RELEASE regardless of what the head commit is: the whole repo just
+  // dropped, and trailing "fix readme"/"add bib" commits on a days-old model
+  // shouldn't demote it to an update and hide it from the releases view.
+  const NEW_REPO_MS = 14 * 24 * 60 * 60 * 1000;
   const UPDATE_TITLES_CAP = 10;
   const COMMITS_LIMIT = 30;
   items.forEach((it, i) => {
@@ -581,7 +586,11 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
     const releaseDate = releaseDates[i];
     const headDate = head ? Date.parse(head.date ?? "") : NaN;
     if (releaseDate != null && Number.isFinite(headDate)) {
-      it.isUpdate = headDate - releaseDate > CLUSTER_GAP_MS;
+      // Fresh repo → release, no matter how late its head doc-commit lands.
+      const createdMs = it.createdAt ? Date.parse(it.createdAt) : NaN;
+      const repoIsFresh =
+        Number.isFinite(createdMs) && headDate - createdMs <= NEW_REPO_MS;
+      it.isUpdate = !repoIsFresh && headDate - releaseDate > CLUSTER_GAP_MS;
       if (it.isUpdate) {
         const chrono = [...list].reverse(); // oldest → newest
         const titles: string[] = [];
