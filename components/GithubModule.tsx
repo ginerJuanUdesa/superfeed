@@ -636,11 +636,15 @@ function PRCard({
               <StateChip state={item.state} kind={item.kind} />
             </span>
           </div>
-          <div className="mt-1 text-[13px] font-semibold leading-snug" style={{ color: GH.text }}>
-            {item.title}
+          <div className="mt-1 leading-snug">
             {typeof item.number === "number" && (
-              <span style={{ color: GH.textFaint }}>{" "}#{item.number}</span>
-            )}
+              <span className="text-[15px] font-bold mono" style={{ color: GH.link }}>
+                #{item.number}
+              </span>
+            )}{" "}
+            <span className="text-[13px] font-medium" style={{ color: GH.textMuted }}>
+              {item.title}
+            </span>
           </div>
           {gist ? (
             <div
