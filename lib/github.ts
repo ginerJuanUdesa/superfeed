@@ -327,7 +327,8 @@ export async function fetchOpenPRs(opts: {
       state: it.draft ? "draft" : "open",
       body: firstParagraph(it.body ?? ""),
       url: it.html_url,
-      createdAt: it.updated_at,
+      // Sorted by recently-updated, but the card shows when it was *opened*.
+      createdAt: it.created_at,
     };
   });
 

@@ -345,9 +345,9 @@ export default function GithubModule({ module, onRemove, onUpdateConfig }: Props
         {showPRs && prCount > 0 && (
           <>
             {bothOn && <SectionLabel>Open pull requests</SectionLabel>}
-            <ul className="px-3 pt-3 pb-1 space-y-3">
+            <ul className="px-3 pt-2.5 pb-1 space-y-1.5">
               {prs!.map((it) => (
-                <FeedCard key={it.id} item={it} />
+                <PRCard key={it.id} item={it} />
               ))}
             </ul>
           </>
@@ -498,6 +498,50 @@ function ViewMenu({
         </div>
       )}
     </div>
+  );
+}
+
+/* Minimal card for the user's own open PRs — no avatar/actor, since every row
+ * is theirs. Repo, title + state, a one-line gist, and when it was opened. */
+function PRCard({ item }: { item: GithubItem }) {
+  const GH = useGHPalette();
+  return (
+    <li>
+      <a
+        href={item.url}
+        target="_blank"
+        rel="noreferrer noopener"
+        draggable={false}
+        className="block rounded-md px-2.5 py-2 transition-colors hover:brightness-110"
+        style={{ background: GH.cardBg, border: `1px solid ${GH.border}` }}
+      >
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 truncate mono text-[11px]" style={{ color: GH.textMuted }}>
+            {item.repo}
+          </span>
+          <span className="ml-auto shrink-0">
+            <StateChip state={item.state} kind={item.kind} />
+          </span>
+        </div>
+        <div className="mt-1 text-[13px] font-semibold leading-snug" style={{ color: GH.text }}>
+          {item.title}
+          {typeof item.number === "number" && (
+            <span style={{ color: GH.textFaint }}>{" "}#{item.number}</span>
+          )}
+        </div>
+        {item.body && (
+          <div
+            className="mt-0.5 text-[12px] leading-snug line-clamp-2"
+            style={{ color: GH.textMuted }}
+          >
+            {item.body}
+          </div>
+        )}
+        <div className="mt-1 text-[11px]" style={{ color: GH.textFaint }}>
+          opened {relativeTime(item.createdAt)}
+        </div>
+      </a>
+    </li>
   );
 }
 
