@@ -1,4 +1,11 @@
-export type ModuleType = "gmail" | "hf" | "calendar" | "github" | "redmine" | "fleet";
+export type ModuleType = "gmail" | "hf" | "calendar" | "github" | "redmine" | "fleet" | "media";
+
+export interface MediaConfig {
+  /** Data URL (from a picked file) or an http(s) URL. */
+  src?: string;
+  /** How the image fills the module. Defaults to "cover". */
+  fit?: "cover" | "contain";
+}
 
 export type HFKind = "model" | "dataset" | "space" | "paper";
 

@@ -7,6 +7,7 @@ import CalendarModule from "./CalendarModule";
 import GithubModule from "./GithubModule";
 import RedmineModule from "./RedmineModule";
 import FleetModule from "./FleetModule";
+import MediaModule from "./MediaModule";
 
 interface Props {
   module: ModuleInstance;
@@ -32,6 +33,9 @@ export default function Module({ module, onRemove, onUpdateConfig }: Props) {
   }
   if (module.type === "fleet") {
     return <FleetModule module={module} onRemove={onRemove} onUpdateConfig={onUpdateConfig} />;
+  }
+  if (module.type === "media") {
+    return <MediaModule module={module} onRemove={onRemove} onUpdateConfig={onUpdateConfig} />;
   }
   return null;
 }

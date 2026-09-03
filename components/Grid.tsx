@@ -258,6 +258,8 @@ export default function Grid() {
         ? "Feed"
         : type === "fleet"
         ? "Fleet"
+        : type === "media"
+        ? "Media"
         : "HF Feed";
     const allKinds = ["model", "dataset", "space", "paper"] as HFKind[];
     // Both module types default to "everything included": HF gets all four
@@ -372,6 +374,7 @@ function Toolbar({
       <DraggableTile type="github" onDragStart={onDragStart} />
       <DraggableTile type="redmine" onDragStart={onDragStart} />
       <DraggableTile type="fleet" onDragStart={onDragStart} />
+      <DraggableTile type="media" onDragStart={onDragStart} />
     </div>
   );
 }
@@ -414,6 +417,8 @@ function DraggableTile({
       ? "Redmine issues"
       : type === "fleet"
       ? "Fleet status"
+      : type === "media"
+      ? "Media (image / GIF)"
       : "HuggingFace feed";
   return (
     <div
@@ -439,6 +444,8 @@ function DraggableTile({
         <RedmineTileIcon />
       ) : type === "fleet" ? (
         <FleetTileIcon />
+      ) : type === "media" ? (
+        <MediaTileIcon />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img src="/logos/hf.png" alt="HuggingFace" width={28} height={28} className="pointer-events-none" draggable={false} />
@@ -465,6 +472,26 @@ function FleetTileIcon() {
       <rect x="3.5" y="17" width="17" height="3.5" rx="1" />
       <circle cx="17.5" cy="6.5" r="0.8" fill="currentColor" stroke="none" />
       <circle cx="17.5" cy="13" r="0.8" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** Inline "picture frame" glyph for the Media rail tile — no external asset. */
+function MediaTileIcon() {
+  return (
+    <svg
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
+      className="pointer-events-none"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinejoin="round"
+    >
+      <rect x="3.5" y="4.5" width="17" height="15" rx="1.6" />
+      <circle cx="8.5" cy="9.5" r="1.4" fill="currentColor" stroke="none" />
+      <path d="M4 17l4.5-5 3.5 3.5L15 12l5 5" strokeLinecap="round" />
     </svg>
   );
 }
