@@ -10,15 +10,38 @@ interface Props {
   onUpdateConfig: (id: string, config: Record<string, unknown>) => void;
 }
 
-/* The whole panel is the media — no header, no chrome. Hover reveals the
- * burger (change/fit) and the × in the top-right, matching the other
- * modules. Files chosen from disk are inlined as data URLs so they survive
- * across sessions without a separate upload endpoint; pasted URLs are used
- * verbatim. */
+/* The whole panel is the media, no header, no chrome. Hover reveals the
+ * burger (change/fit) and the × in the top-right, matching the other modules.
+ * Files chosen from disk (images or GIFs) are uploaded to the server and stored
+ * under .local/uploads (a host-mounted volume, so they survive redeploys); the
+ * config only keeps the small /api/media/file/<id> URL. Pasted URLs are used
+ * verbatim. Default fit is "contain" so the whole image shows and adapts to the
+ * panel regardless of its dimensions. */
+
+/** Upload a picked file to the server, returning its served URL. Throws with a
+ *  human-readable message the caller can surface. */
+async function uploadMedia(file: File): Promise<string> {
+  const body = new FormData();
+  body.append("file", file);
+  const res = await fetch("/api/media/upload", { method: "POST", body });
+  if (!res.ok) {
+    let msg = `upload failed (${res.status})`;
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j.error) msg = j.error;
+    } catch {
+      /* keep the status message */
+    }
+    throw new Error(msg);
+  }
+  const j = (await res.json()) as { url: string };
+  return j.url;
+}
+
 export default function MediaModule({ module, onRemove, onUpdateConfig }: Props) {
   const cfg = module.config as MediaConfig;
   const src = cfg.src;
-  const fit = cfg.fit ?? "cover";
+  const fit = cfg.fit ?? "contain";
   const isDark = useIsDark();
 
   const bg = isDark ? "#0d1117" : "#ffffff";
@@ -86,15 +109,18 @@ function EmptyState({
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const onFile = (f: File | undefined) => {
-    if (!f) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result === "string") onPick(result);
-    };
-    reader.readAsDataURL(f);
+  const onFile = async (f: File | undefined) => {
+    if (!f || busy) return;
+    setBusy(true);
+    try {
+      onPick(await uploadMedia(f));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "upload failed");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -112,9 +138,10 @@ function EmptyState({
         onFile(e.dataTransfer.files?.[0]);
       }}
     >
-      <div className="text-sm">Drop an image or GIF here</div>
+      <div className="text-sm">{busy ? "Uploading…" : "Drop an image or GIF here"}</div>
       <button
         type="button"
+        disabled={busy}
         onClick={(e) => {
           e.stopPropagation();
           fileRef.current?.click();
@@ -181,17 +208,14 @@ function BurgerMenu({
     return () => window.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  const onFile = (f: File | undefined) => {
+  const onFile = async (f: File | undefined) => {
     if (!f) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result === "string") {
-        onReplace(result);
-        setOpen(false);
-      }
-    };
-    reader.readAsDataURL(f);
+    try {
+      onReplace(await uploadMedia(f));
+      setOpen(false);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "upload failed");
+    }
   };
 
   return (
