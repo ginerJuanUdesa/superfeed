@@ -642,7 +642,7 @@ function PRCard({
                 #{item.number}
               </span>
             )}{" "}
-            <span className="text-[13px] font-medium" style={{ color: GH.textMuted }}>
+            <span className="text-[13px] font-medium" style={{ color: GH.text }}>
               {item.title}
             </span>
           </div>
