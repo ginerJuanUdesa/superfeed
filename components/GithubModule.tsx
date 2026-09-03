@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   GitBranch,
   GitCommit,
@@ -137,9 +137,13 @@ function StateChip({ state, kind }: { state: GithubItemState; kind: GithubItemKi
   );
 }
 
-export default function GithubModule({ module, onRemove }: Props) {
+export default function GithubModule({ module, onRemove, onUpdateConfig }: Props) {
   const GH = useGHPalette();
+  // Feed on by default; PRs opt-in. `undefined` means never-touched → default.
+  const showFeed = module.config.showFeed !== false;
+  const showPRs = module.config.showPRs === true;
   const [items, setItems] = useState<GithubItem[] | null>(null);
+  const [prs, setPrs] = useState<GithubItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -176,6 +180,26 @@ export default function GithubModule({ module, onRemove }: Props) {
     return (await res.json()) as { items: GithubItem[]; hasMore: boolean };
   }, []);
 
+  const fetchPRs = useCallback(async (signal: AbortSignal): Promise<GithubItem[] | null> => {
+    const settings = loadSettings();
+    const user = settings.githubUsername.trim();
+    if (!user) {
+      setError("Set your GitHub username in Settings");
+      return [];
+    }
+    const res = await fetch("/api/github/prs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ user, token: settings.githubToken || undefined }),
+      signal,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(body.error ?? `HTTP ${res.status}`);
+    }
+    return ((await res.json()) as { items: GithubItem[] }).items;
+  }, []);
+
   const load = useCallback(async () => {
     abortRef.current?.abort();
     const ctrl = new AbortController();
@@ -183,21 +207,25 @@ export default function GithubModule({ module, onRemove }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchPage(1, ctrl.signal);
-      if (!data) return;
-      setItems(data.items);
-      setHasMore(data.hasMore);
+      const [prData, feedData] = await Promise.all([
+        showPRs ? fetchPRs(ctrl.signal) : Promise.resolve<GithubItem[] | null>(null),
+        showFeed ? fetchPage(1, ctrl.signal) : Promise.resolve(null),
+      ]);
+      setPrs(showPRs ? prData : null);
+      setItems(showFeed ? (feedData?.items ?? null) : null);
+      setHasMore(showFeed ? (feedData?.hasMore ?? false) : false);
       setPage(1);
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message);
       setItems([]);
+      setPrs([]);
       setHasMore(false);
       return false;
     } finally {
       setLoading(false);
     }
-  }, [fetchPage]);
+  }, [fetchPage, fetchPRs, showFeed, showPRs]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || loading || !hasMore) return;
@@ -225,6 +253,18 @@ export default function GithubModule({ module, onRemove }: Props) {
   useAutoRefresh(load, { intervalMs: REFRESH_MS });
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  // Reload immediately when the user flips Feed / Pull requests. useAutoRefresh
+  // pins `load` in a ref and never re-fires on identity change, so drive it here.
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showFeed, showPRs]);
+
   useEffect(() => {
     const el = sentinelRef.current;
     const root = scrollRef.current;
@@ -239,7 +279,13 @@ export default function GithubModule({ module, onRemove }: Props) {
     return () => obs.disconnect();
   }, [hasMore, loadMore, items]);
 
-  const empty = items && items.length === 0;
+  const prCount = prs?.length ?? 0;
+  const feedCount = items?.length ?? 0;
+  const totalCount = prCount + feedCount;
+  const loaded = (!showPRs || prs !== null) && (!showFeed || items !== null);
+  const nothingOn = !showPRs && !showFeed;
+  const empty = loaded && totalCount === 0 && !nothingOn;
+  const bothOn = showPRs && showFeed;
 
   return (
     <div
@@ -258,7 +304,8 @@ export default function GithubModule({ module, onRemove }: Props) {
           GitHub
         </span>
         <span className="panel-header-meta mono" style={{ color: GH.textFaint }}>
-          {items ? String(items.length).padStart(2, "0") : "00"} events
+          {loaded ? String(totalCount).padStart(2, "0") : "00"}{" "}
+          {showPRs && !showFeed ? "open PRs" : "events"}
         </span>
         {loading && (
           <span className="panel-header-meta mono ml-auto" style={{ color: GH.link }}>
@@ -280,14 +327,27 @@ export default function GithubModule({ module, onRemove }: Props) {
             {error}
           </div>
         )}
-        {items && items.length > 0 && (
-          <ul className="px-3 py-3 space-y-3">
-            {items.map((it) => (
-              <FeedCard key={it.id} item={it} />
-            ))}
-          </ul>
+        {showPRs && prCount > 0 && (
+          <>
+            {bothOn && <SectionLabel>Open pull requests</SectionLabel>}
+            <ul className="px-3 pt-3 pb-1 space-y-3">
+              {prs!.map((it) => (
+                <FeedCard key={it.id} item={it} />
+              ))}
+            </ul>
+          </>
         )}
-        {items && items.length > 0 && hasMore && (
+        {showFeed && feedCount > 0 && (
+          <>
+            {bothOn && <SectionLabel>Activity</SectionLabel>}
+            <ul className="px-3 pt-3 pb-3 space-y-3">
+              {items!.map((it) => (
+                <FeedCard key={it.id} item={it} />
+              ))}
+            </ul>
+          </>
+        )}
+        {showFeed && feedCount > 0 && hasMore && (
           <div
             ref={sentinelRef}
             className="py-3 text-center text-[11px] mono"
@@ -296,17 +356,30 @@ export default function GithubModule({ module, onRemove }: Props) {
             {loadingMore ? "loading more…" : ""}
           </div>
         )}
+        {nothingOn && !error && (
+          <div
+            className="absolute bottom-3 inset-x-3 text-center text-xs"
+            style={{ color: GH.textFaint }}
+          >
+            Nothing selected. Open the menu (top-right) and pick Feed or Pull requests.
+          </div>
+        )}
         {empty && !error && (
           <div
             className="absolute bottom-3 inset-x-3 text-center text-xs"
             style={{ color: GH.textFaint }}
           >
-            No activity yet.
+            {showPRs && !showFeed ? "No open pull requests." : "No activity yet."}
           </div>
         )}
       </div>
 
       <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex items-center gap-1">
+        <ViewMenu
+          showFeed={showFeed}
+          showPRs={showPRs}
+          onChange={(next) => onUpdateConfig(module.id, { ...module.config, ...next })}
+        />
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -320,6 +393,95 @@ export default function GithubModule({ module, onRemove }: Props) {
           ×
         </button>
       </div>
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  const GH = useGHPalette();
+  return (
+    <div
+      className="px-3.5 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide"
+      style={{ color: GH.textFaint }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ViewMenu({
+  showFeed,
+  showPRs,
+  onChange,
+}: {
+  showFeed: boolean;
+  showPRs: boolean;
+  onChange: (next: { showFeed?: boolean; showPRs?: boolean }) => void;
+}) {
+  const GH = useGHPalette();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  const rows: { key: "showPRs" | "showFeed"; label: string; checked: boolean }[] = [
+    { key: "showPRs", label: "Pull requests", checked: showPRs },
+    { key: "showFeed", label: "Feed", checked: showFeed },
+  ];
+
+  return (
+    <div ref={ref} className="relative no-drag">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="w-7 h-7 flex flex-col items-center justify-center gap-[3px] rounded-md"
+        style={{ color: GH.textMuted }}
+        title="View options"
+      >
+        <span className="w-3 h-[1.5px] bg-current rounded-full" />
+        <span className="w-3 h-[1.5px] bg-current rounded-full" />
+        <span className="w-3 h-[1.5px] bg-current rounded-full" />
+      </button>
+      {open && (
+        <div
+          className="absolute top-8 right-0 z-20 py-1 rounded-md"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            background: GH.cardBg,
+            border: `1px solid ${GH.border}`,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+            width: 176,
+          }}
+        >
+          {rows.map((row) => (
+            <label
+              key={row.key}
+              className="flex items-center gap-2 px-3 py-1.5 cursor-pointer text-[13px]"
+              style={{ color: GH.text }}
+            >
+              <input
+                type="checkbox"
+                checked={row.checked}
+                onChange={(e) => onChange({ [row.key]: e.target.checked })}
+                className="accent-current"
+                style={{ accentColor: GH.link }}
+              />
+              {row.label}
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

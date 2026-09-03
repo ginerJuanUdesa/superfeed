@@ -25,6 +25,14 @@ export interface RedmineConfig {
   projectIds?: number[];
 }
 
+export interface GithubConfig {
+  /** Show the received-events activity feed. Defaults to true. */
+  showFeed?: boolean;
+  /** Show the user's own open pull requests (across all repos). Defaults to false.
+   *  When both are on, PRs render first, then the feed. */
+  showPRs?: boolean;
+}
+
 export interface GmailConfig {
   /** Accounts the user explicitly UNCHECKED in the module. Any configured
    *  account NOT in this list is included. This way freshly-dropped modules
@@ -39,7 +47,7 @@ export interface ModuleInstance {
   id: string;
   type: ModuleType;
   title: string;
-  config: HFConfig & GmailConfig & Record<string, unknown>;
+  config: HFConfig & GmailConfig & GithubConfig & Record<string, unknown>;
 }
 
 export const HF_KINDS: { key: HFKind; label: string }[] = [

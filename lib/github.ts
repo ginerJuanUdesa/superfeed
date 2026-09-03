@@ -271,6 +271,70 @@ function normalize(ev: RawEvent): GithubItem | null {
 const FEED_TTL_MS = 60 * 1000;
 const feedCache = new Map<string, { at: number; items: GithubItem[]; hasMore: boolean }>();
 
+interface RawSearchItem {
+  id: number;
+  number: number;
+  title: string;
+  html_url: string;
+  state: string;
+  draft?: boolean;
+  body?: string | null;
+  created_at: string;
+  updated_at: string;
+  repository_url: string;
+  user: { login: string; avatar_url: string };
+  pull_request?: { merged_at?: string | null };
+}
+
+const prCache = new Map<string, { at: number; items: GithubItem[] }>();
+
+/** Every open PR authored by the user across all repos, newest-updated first.
+ *  Closed and merged PRs are excluded at the query level (`state:open` already
+ *  drops both — a merged PR is a closed PR). Drafts stay in, flagged as such. */
+export async function fetchOpenPRs(opts: {
+  user: string;
+  token?: string;
+}): Promise<GithubItem[]> {
+  const { user, token } = opts;
+  const cacheKey = user;
+  const hit = prCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < FEED_TTL_MS) return hit.items;
+
+  const q = `type:pr author:${user} state:open`;
+  const url = `${GH_BASE}/search/issues?q=${encodeURIComponent(q)}&sort=updated&order=desc&per_page=100`;
+  const res = await fetch(url, {
+    headers: headers(token),
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`GitHub PR search failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as { items?: RawSearchItem[] };
+  const items: GithubItem[] = (data.items ?? []).map((it) => {
+    const repo = it.repository_url.replace(`${GH_BASE}/repos/`, "");
+    return {
+      id: `pr-${it.id}`,
+      kind: "pr" as const,
+      action: "opened a pull request in",
+      actor: it.user.login,
+      actorAvatar: it.user.avatar_url,
+      repo,
+      repoUrl: repoUrl(repo),
+      title: it.title,
+      number: it.number,
+      state: it.draft ? "draft" : "open",
+      body: firstParagraph(it.body ?? ""),
+      url: it.html_url,
+      createdAt: it.updated_at,
+    };
+  });
+
+  prCache.set(cacheKey, { at: Date.now(), items });
+  return items;
+}
+
 export async function fetchFeed(opts: {
   user: string;
   token?: string;
