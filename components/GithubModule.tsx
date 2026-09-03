@@ -22,6 +22,7 @@ import type {
 } from "@/lib/github";
 import { useAutoRefresh } from "@/lib/useAutoRefresh";
 import { useIsDark } from "@/lib/useIsDark";
+import { getSummary, keyFor, preloadSummaries, setSummary } from "@/lib/summaryCache";
 
 interface Props {
   module: ModuleInstance;
@@ -149,6 +150,8 @@ export default function GithubModule({ module, onRemove, onUpdateConfig }: Props
   const showPRs = module.config.showPRs === true;
   const [items, setItems] = useState<GithubItem[] | null>(null);
   const [prs, setPrs] = useState<GithubItem[] | null>(null);
+  // LLM summaries for the user's own PRs, keyed by summaryCache key.
+  const [summaries, setSummaries] = useState<Record<string, string>>({});
   // Assume a token until a fetch proves otherwise — avoids a hint flash on load.
   const [hasToken, setHasToken] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -273,6 +276,63 @@ export default function GithubModule({ module, onRemove, onUpdateConfig }: Props
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showFeed, showPRs]);
 
+  // Summarize the user's own PRs with the local LLM (same plumbing as the HF
+  // module). Cached server-side via summaryCache, so it's generated once per PR
+  // across devices. Falls back to the raw description when no LLM is set.
+  useEffect(() => {
+    if (!showPRs || !prs || prs.length === 0) return;
+    const settings = loadSettings();
+    let cancelled = false;
+    let idx = 0;
+    async function worker(pending: GithubItem[]) {
+      while (!cancelled && idx < pending.length) {
+        const it = pending[idx++];
+        const k = keyFor("pr", it.id);
+        try {
+          const res = await fetch("/api/github/pr-summary", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              title: it.title,
+              body: it.body,
+              repo: it.repo,
+              llmUrl: settings.localLlmUrl,
+              llmModel: settings.localLlmModel || undefined,
+            }),
+          });
+          if (!res.ok) continue;
+          const data = (await res.json()) as { summary?: string };
+          const summary = (data.summary || "").trim();
+          if (cancelled) return;
+          if (summary) {
+            setSummary(k, summary);
+            setSummaries((prev) => ({ ...prev, [k]: summary }));
+          }
+        } catch {
+          // ignore — the card falls back to the raw description
+        }
+      }
+    }
+    void (async () => {
+      await preloadSummaries();
+      if (cancelled) return;
+      const init: Record<string, string> = {};
+      const pending: GithubItem[] = [];
+      for (const it of prs) {
+        const k = keyFor("pr", it.id);
+        const cached = getSummary(k);
+        if (cached) init[k] = cached;
+        else pending.push(it);
+      }
+      if (Object.keys(init).length) setSummaries((prev) => ({ ...prev, ...init }));
+      if (!settings.localLlmUrl || !pending.length) return;
+      void worker(pending);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [prs, showPRs]);
+
   useEffect(() => {
     const el = sentinelRef.current;
     const root = scrollRef.current;
@@ -294,6 +354,7 @@ export default function GithubModule({ module, onRemove, onUpdateConfig }: Props
   const nothingOn = !showPRs && !showFeed;
   const empty = loaded && totalCount === 0 && !nothingOn;
   const bothOn = showPRs && showFeed;
+  const llmConfigured = !!loadSettings().localLlmUrl;
 
   return (
     <div
@@ -351,9 +412,17 @@ export default function GithubModule({ module, onRemove, onUpdateConfig }: Props
           <>
             {bothOn && <SectionLabel>Open pull requests</SectionLabel>}
             <ul className="px-3 pt-2.5 pb-1 space-y-1.5">
-              {prs!.map((it) => (
-                <PRCard key={it.id} item={it} />
-              ))}
+              {prs!.map((it) => {
+                const k = keyFor("pr", it.id);
+                return (
+                  <PRCard
+                    key={it.id}
+                    item={it}
+                    summary={summaries[k]}
+                    summarizing={!summaries[k] && llmConfigured}
+                  />
+                );
+              })}
             </ul>
           </>
         )}
@@ -526,9 +595,19 @@ function ReviewChip({ decision }: { decision: GithubReviewDecision }) {
 }
 
 /* Minimal card for the user's own open PRs. Small author pfp, repo, title +
- * state, a one-line gist, and when it was opened. */
-function PRCard({ item }: { item: GithubItem }) {
+ * state, a one-line gist (LLM summary, falling back to the raw description),
+ * and when it was opened. */
+function PRCard({
+  item,
+  summary,
+  summarizing,
+}: {
+  item: GithubItem;
+  summary?: string;
+  summarizing?: boolean;
+}) {
   const GH = useGHPalette();
+  const gist = summary ?? item.body;
   return (
     <li>
       <a
@@ -563,14 +642,18 @@ function PRCard({ item }: { item: GithubItem }) {
               <span style={{ color: GH.textFaint }}>{" "}#{item.number}</span>
             )}
           </div>
-          {item.body && (
+          {gist ? (
             <div
               className="mt-0.5 text-[12px] leading-snug line-clamp-2"
               style={{ color: GH.textMuted }}
             >
-              {item.body}
+              {gist}
             </div>
-          )}
+          ) : summarizing ? (
+            <div className="mt-0.5 text-[12px] italic" style={{ color: GH.textFaint }}>
+              summarizing…
+            </div>
+          ) : null}
           <div className="mt-1 flex items-center gap-2">
             <span className="text-[11px]" style={{ color: GH.textFaint }}>
               opened {relativeTime(item.createdAt)}

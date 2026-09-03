@@ -337,7 +337,9 @@ export async function fetchOpenPRs(opts: {
       title: it.title,
       number: it.number,
       state: it.draft ? "draft" : "open",
-      body: firstParagraph(it.body ?? ""),
+      // Keep a fuller slice than the feed default — this feeds the LLM
+      // summarizer, and the card visually clamps to two lines anyway.
+      body: firstParagraph(it.body ?? "", 1000),
       url: it.html_url,
       // Sorted by recently-updated, but the card shows when it was *opened*.
       createdAt: it.created_at,
