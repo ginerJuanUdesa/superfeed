@@ -144,6 +144,8 @@ export default function GithubModule({ module, onRemove, onUpdateConfig }: Props
   const showPRs = module.config.showPRs === true;
   const [items, setItems] = useState<GithubItem[] | null>(null);
   const [prs, setPrs] = useState<GithubItem[] | null>(null);
+  // Assume a token until a fetch proves otherwise — avoids a hint flash on load.
+  const [hasToken, setHasToken] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -183,6 +185,7 @@ export default function GithubModule({ module, onRemove, onUpdateConfig }: Props
   const fetchPRs = useCallback(async (signal: AbortSignal): Promise<GithubItem[] | null> => {
     const settings = loadSettings();
     const user = settings.githubUsername.trim();
+    setHasToken(!!settings.githubToken.trim());
     if (!user) {
       setError("Set your GitHub username in Settings");
       return [];
@@ -325,6 +328,18 @@ export default function GithubModule({ module, onRemove, onUpdateConfig }: Props
             }}
           >
             {error}
+          </div>
+        )}
+        {showPRs && !hasToken && (
+          <div
+            className="m-3 px-3 py-2 text-xs rounded-md"
+            style={{
+              color: GH.textMuted,
+              background: GH.cardInnerBg,
+              border: `1px solid ${GH.border}`,
+            }}
+          >
+            Private-repo PRs need a GitHub token. Add one (scope <code>repo</code>) in Settings to include them.
           </div>
         )}
         {showPRs && prCount > 0 && (
