@@ -1,10 +1,12 @@
 import {
   selectHFItems,
   upsertHFItems,
+  insertHFItemsIfAbsent,
   selectHFAccounts,
   upsertHFAccounts,
   selectHFItemsByAuthorKind,
   deleteHFItems,
+  getKV,
 } from "./db";
 
 export type HFKind = "model" | "dataset" | "space" | "paper";
@@ -523,7 +525,12 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
     const key = `${it.kind}:${it.id}`;
     if (!dedup.has(key)) dedup.set(key, it);
   }
-  const items = [...dedup.values()].slice(0, maxItems);
+  const allItems = [...dedup.values()];
+  // Only the top-N by recency get the expensive commit + tree lookups and full
+  // release-vs-update classification. The long tail past this window is still
+  // PERSISTED below (insert-if-absent) so nothing followed is ever dropped just
+  // because noisier accounts outrank it in the global window.
+  const items = allItems.slice(0, maxItems);
 
   // Only the items we actually return get a commit lookup.
   const commits = await pool(
@@ -713,4 +720,58 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
       itemJson: JSON.stringify(it),
     }))
   );
+
+  // The long tail past the enrichment window: persist WITHOUT a commit/tree
+  // lookup so we never lose a followed repo, and insert-if-absent so we never
+  // downgrade a row a previous sweep already enriched. Classification here is a
+  // cheap heuristic (no HTTP): a repo whose last change is well after creation
+  // is an update, otherwise a release. These rows still surface via scroll and
+  // get upgraded to full classification if a later sweep pulls them into the
+  // top-N window.
+  const rest = allItems.slice(maxItems);
+  if (rest.length) {
+    for (const it of rest) {
+      it.avatarUrl = avatars.get(it.author);
+      const created = it.createdAt ? Date.parse(it.createdAt) : NaN;
+      const modified = Date.parse(it.lastModified);
+      it.isUpdate =
+        Number.isFinite(created) && Number.isFinite(modified)
+          ? modified - created > CLUSTER_GAP_MS
+          : false;
+    }
+    insertHFItemsIfAbsent(
+      rest.map((it) => ({
+        kind: it.kind,
+        id: it.id,
+        lastModified: Date.parse(it.lastModified) || 0,
+        isUpdate: !!it.isUpdate,
+        itemJson: JSON.stringify(it),
+      }))
+    );
+  }
+}
+
+/**
+ * Server-side periodic sweep, independent of anyone opening the app. Reads the
+ * persisted settings (HF username / token / start date) and forces a fresh
+ * sweep across all kinds. Started from instrumentation.ts on server boot.
+ * No-op until the app has been configured with an HF username.
+ */
+export async function runBackgroundSweep(): Promise<void> {
+  const settings = getKV<{
+    hfUsername?: string;
+    hfToken?: string;
+    startDate?: string;
+  }>("settings");
+  const user = settings?.hfUsername?.trim();
+  if (!user) return;
+  const token = settings?.hfToken?.trim() || undefined;
+  await fetchFeed({
+    user,
+    kinds: ["model", "dataset", "space", "paper"],
+    since: settings?.startDate,
+    token,
+    fresh: true,
+    maxItems: 80,
+  });
 }

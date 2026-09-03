@@ -292,6 +292,29 @@ export function upsertHFItems(
   tx(rows);
 }
 
+/** Insert rows only when (kind, id) isn't already stored — never overwrites.
+ *  Used to persist the long tail of a sweep (items past the enrichment window)
+ *  so a followed repo is never dropped just because noisier accounts outrank it,
+ *  while leaving any row a previous sweep already enriched untouched. */
+export function insertHFItemsIfAbsent(
+  rows: { kind: string; id: string; lastModified: number; isUpdate: boolean; itemJson: string }[]
+): void {
+  if (rows.length === 0) return;
+  const db = open();
+  const stmt = db.prepare(
+    `INSERT INTO hf_items (kind, id, last_modified, is_update, item_json, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(kind, id) DO NOTHING`
+  );
+  const now = Date.now();
+  const tx = db.transaction((batch: typeof rows) => {
+    for (const r of batch) {
+      stmt.run(r.kind, r.id, r.lastModified, r.isUpdate ? 1 : 0, r.itemJson, now);
+    }
+  });
+  tx(rows);
+}
+
 /** Return items filtered by kind and (optional) since-cutoff, newest first. */
 export function selectHFItems(opts: {
   kinds: string[];
