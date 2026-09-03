@@ -18,7 +18,7 @@ Modules that summarize (Hugging Face, GitHub PRs, Gmail, Redmine) can call eithe
 ### Development
 
 ```bash
-./run.sh          # installs deps if needed, then next dev on :3000
+./scripts/run.sh   # installs deps if needed, then next dev on :3000
 ```
 
 Open [http://localhost:3000](http://localhost:3000), click the gear to open **Settings**, and fill in the accounts and tokens for the modules you want.
@@ -51,7 +51,7 @@ Everything user-facing is set through the in-app **Settings** modal and stored s
 ```
 app/                 Next.js App Router — the shell and every /api/<module>/ route
 components/          Grid, Module dispatcher, Settings modal
-modules/             One file per module + the registry (see MODULES.md)
+modules/             One file per module + the registry (see docs/MODULES.md)
 lib/                 Shared client + server helpers (settings, db, per-module data layers)
 ```
 
@@ -59,7 +59,7 @@ lib/                 Shared client + server helpers (settings, db, per-module da
 
 Modules are the whole point.
 A module is a React panel plus an optional server route, wired in through a single descriptor.
-See **[MODULES.md](./MODULES.md)** for the full guide and a minimal copy-paste example.
+See **[docs/MODULES.md](./docs/MODULES.md)** for the full guide and a minimal copy-paste example.
 
 ## Built with
 

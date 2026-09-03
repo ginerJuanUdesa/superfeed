@@ -5,7 +5,7 @@ Adding one takes a single file and a single line in the registry — no changes 
 
 ## The contract
 
-Every module exports a `ModuleDescriptor` (see [`modules/types.ts`](./modules/types.ts)):
+Every module exports a `ModuleDescriptor` (see [`modules/types.ts`](../modules/types.ts)):
 
 ```ts
 export interface ModuleDescriptor {
@@ -77,7 +77,7 @@ export const clockModule: ModuleDescriptor = {
 };
 ```
 
-Then register it in [`modules/registry.ts`](./modules/registry.ts):
+Then register it in [`modules/registry.ts`](../modules/registry.ts):
 
 ```ts
 import { clockModule } from "./ClockModule";
