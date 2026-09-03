@@ -295,10 +295,15 @@ export default function Grid() {
   }
 
   if (isMobile) {
+    // Media (image/GIF) panels are decorative and don't belong on the phone
+    // carousel — hide them there. They stay on the desktop grid.
+    const mobileModules = modules.filter((m) => m.type !== "media");
+    const mobileIds = new Set(mobileModules.map((m) => m.id));
+    const mobileLayout = layout.filter((l) => mobileIds.has(l.i));
     return (
       <MobileCarousel
-        modules={modules}
-        layout={layout}
+        modules={mobileModules}
+        layout={mobileLayout}
         onUpdateConfig={updateConfig}
       />
     );
