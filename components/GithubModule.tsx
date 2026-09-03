@@ -512,7 +512,8 @@ function PRCard({ item }: { item: GithubItem }) {
         target="_blank"
         rel="noreferrer noopener"
         draggable={false}
-        className="block rounded-md px-2.5 py-2 transition-colors hover:brightness-110"
+        onMouseDown={(e) => e.stopPropagation()}
+        className="no-drag block rounded-md px-2.5 py-2 transition-colors hover:brightness-110"
         style={{ background: GH.cardBg, border: `1px solid ${GH.border}` }}
       >
         <div className="flex items-center gap-2">
