@@ -360,7 +360,11 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
               const subline = item.isUpdate
                 ? undefined
                 : summary ?? item.description ?? item.lastCommit;
-              const verb = item.isUpdate ? "updated" : "released";
+              const verb = item.isUpdate
+                ? "updated"
+                : item.isReRelease
+                  ? "re-released"
+                  : "released";
               return (
                 <li key={k}>
                   <a

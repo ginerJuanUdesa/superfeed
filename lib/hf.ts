@@ -43,6 +43,10 @@ export interface HFItem {
    * a RELEASE by this, not by lastModified — a trailing "add bib" doc commit
    * shouldn't make a model read as "released 2d ago" when it dropped 6d ago. */
   releaseDate?: string;
+  /** True when this is a release of NEW weights on an already-existing repo
+   * (weights changed long after creation) rather than a first drop — the card
+   * says "re-released" instead of "released". */
+  isReRelease?: boolean;
   /** Profile picture of the org/user that owns the repo — drives the card color. */
   avatarUrl?: string;
 }
@@ -596,6 +600,9 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
       const repoIsFresh =
         Number.isFinite(createdMs) && headDate - createdMs <= NEW_REPO_MS;
       it.isUpdate = !repoIsFresh && headDate - releaseDate > CLUSTER_GAP_MS;
+      // A release on a non-fresh repo means new weights landed on a model that
+      // already existed → re-release, not a first drop.
+      it.isReRelease = !it.isUpdate && !repoIsFresh;
       if (it.isUpdate) {
         const chrono = [...list].reverse(); // oldest → newest
         const titles: string[] = [];
