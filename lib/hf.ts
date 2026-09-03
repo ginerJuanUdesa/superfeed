@@ -39,6 +39,10 @@ export interface HFItem {
    * since the first release. Populated for UPDATE items only. */
   updateCommits?: string[];
   createdAt?: string;
+  /** When the weights/data last landed (the release moment), ISO. The feed dates
+   * a RELEASE by this, not by lastModified — a trailing "add bib" doc commit
+   * shouldn't make a model read as "released 2d ago" when it dropped 6d ago. */
+  releaseDate?: string;
   /** Profile picture of the org/user that owns the repo — drives the card color. */
   avatarUrl?: string;
 }
@@ -586,6 +590,7 @@ async function runSweep(opts: Parameters<typeof fetchFeed>[0]): Promise<void> {
     const releaseDate = releaseDates[i];
     const headDate = head ? Date.parse(head.date ?? "") : NaN;
     if (releaseDate != null && Number.isFinite(headDate)) {
+      it.releaseDate = new Date(releaseDate).toISOString();
       // Fresh repo → release, no matter how late its head doc-commit lands.
       const createdMs = it.createdAt ? Date.parse(it.createdAt) : NaN;
       const repoIsFresh =

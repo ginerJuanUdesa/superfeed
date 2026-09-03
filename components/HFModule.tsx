@@ -89,6 +89,9 @@ function relativeTime(iso: string): string {
 
 export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
   const HF = useHFPalette();
+  const kindsKey = JSON.stringify(module.config.kinds ?? null);
+  const releaseKindsKey = JSON.stringify(module.config.releaseKinds ?? null);
+  const updateKindsKey = JSON.stringify(module.config.updateKinds ?? null);
   const { releaseKinds, updateKinds, anyKinds } = useMemo(() => {
     const legacy = (module.config.kinds as HFKind[] | undefined) ?? [];
     const rk = (module.config.releaseKinds as HFKind[] | undefined) ?? legacy;
@@ -99,11 +102,7 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
       anyKinds: Array.from(new Set([...rk, ...uk])),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    JSON.stringify(module.config.kinds ?? null),
-    JSON.stringify(module.config.releaseKinds ?? null),
-    JSON.stringify(module.config.updateKinds ?? null),
-  ]);
+  }, [kindsKey, releaseKindsKey, updateKindsKey]);
   const [items, setItems] = useState<HFItem[] | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -412,7 +411,13 @@ export default function HFModule({ module, onRemove, onUpdateConfig }: Props) {
                         className="ml-auto shrink-0"
                         style={{ color: HF.textFaint }}
                       >
-                        {relativeTime(item.lastModified)}
+                        {relativeTime(
+                          // A release is dated by when its weights landed, not by
+                          // a trailing doc commit; updates by the last commit.
+                          !item.isUpdate && item.releaseDate
+                            ? item.releaseDate
+                            : item.lastModified
+                        )}
                       </span>
                     </div>
 
