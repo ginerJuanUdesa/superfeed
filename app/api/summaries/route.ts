@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllHFSummaries, upsertHFSummaries } from "@/lib/db";
+import { isDemo } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  if (isDemo()) return NextResponse.json({ summaries: {} });
   return NextResponse.json({ summaries: getAllHFSummaries() });
 }
 
 export async function PATCH(req: NextRequest) {
+  if (isDemo()) return NextResponse.json({ ok: true, written: 0 });
   try {
     const body = (await req.json()) as { summaries?: Record<string, string> };
     const entries = body.summaries;

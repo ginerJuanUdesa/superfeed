@@ -5,6 +5,10 @@ Each panel is a **module** — Hugging Face activity, Gmail, Google Calendar, Gi
 
 Version `0.1`.
 
+![The superfeed dashboard, with Hugging Face, GitHub, Gmail, Redmine, Calendar, and Fleet modules on one grid](docs/dashboard.png)
+
+> The screenshot above is the built-in demo board — run `DEMO_MODE=1 npx next dev` to explore the whole app with generic placeholder data and no accounts to configure.
+
 ## What it looks like
 
 A right-hand rail holds one tile per registered module.

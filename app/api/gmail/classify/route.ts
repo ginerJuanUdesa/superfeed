@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isDemo, demoGmailClassifications } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -134,6 +135,7 @@ export async function POST(req: NextRequest) {
     if (!items?.length) {
       return NextResponse.json({ error: "items required" }, { status: 400 });
     }
+    if (isDemo()) return NextResponse.json(demoGmailClassifications(items));
     if (!llmUrl) {
       return NextResponse.json({ error: "llmUrl required" }, { status: 400 });
     }

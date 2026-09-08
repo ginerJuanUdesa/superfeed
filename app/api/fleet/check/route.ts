@@ -5,11 +5,13 @@ import {
   type FleetEndpoint,
   type FleetServer,
 } from "@/lib/fleet";
+import { isDemo, demoFleet } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  if (isDemo()) return NextResponse.json(demoFleet());
   try {
     const body = (await req.json()) as {
       endpoints?: FleetEndpoint[];

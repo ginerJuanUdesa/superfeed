@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIssueDetail, type RedmineIssueDetail } from "@/lib/redmine";
+import { isDemo, demoRedmineSummary } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -106,6 +107,7 @@ export async function POST(req: NextRequest) {
     if (!issueId || !Number.isFinite(issueId)) {
       return NextResponse.json({ error: "issueId required" }, { status: 400 });
     }
+    if (isDemo()) return NextResponse.json(demoRedmineSummary(issueId));
     if (!llmUrl) {
       return NextResponse.json({ error: "llmUrl required" }, { status: 400 });
     }

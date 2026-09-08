@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { HFItem } from "@/lib/hf";
+import { isDemo, demoHFSummary } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,6 +82,7 @@ export async function POST(req: NextRequest) {
   try {
     const { item, llmUrl, llmModel } = (await req.json()) as SummarizeBody;
     if (!item) return NextResponse.json({ error: "item required" }, { status: 400 });
+    if (isDemo()) return NextResponse.json(demoHFSummary(item));
     if (!llmUrl) return NextResponse.json({ error: "llmUrl required" }, { status: 400 });
 
     const model = llmModel?.trim() || (await discoverModel(llmUrl));

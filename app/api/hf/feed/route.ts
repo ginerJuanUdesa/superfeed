@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchFeed, HFKind } from "@/lib/hf";
+import { isDemo, demoHFItems } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  if (isDemo()) return NextResponse.json({ items: demoHFItems(), hasMore: false });
   try {
     const body = (await req.json()) as {
       user?: string;

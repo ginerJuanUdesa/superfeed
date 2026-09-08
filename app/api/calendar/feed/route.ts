@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchUpcomingEvents, CalendarEvent } from "@/lib/calendar";
+import { isDemo, demoCalendarEvents } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +16,7 @@ interface FeedBody {
 }
 
 export async function POST(req: NextRequest) {
+  if (isDemo()) return NextResponse.json({ items: demoCalendarEvents() });
   try {
     const body = (await req.json()) as FeedBody;
     const accounts = (body.accounts ?? [])

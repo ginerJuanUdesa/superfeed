@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listIssues } from "@/lib/redmine";
+import { isDemo, demoRedmineIssues } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +13,7 @@ interface FeedBody {
 }
 
 export async function POST(req: NextRequest) {
+  if (isDemo()) return NextResponse.json({ items: demoRedmineIssues() });
   try {
     const body = (await req.json()) as FeedBody;
     const numericIds = (arr: number[] | undefined) =>

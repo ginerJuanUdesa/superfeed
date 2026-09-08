@@ -5,15 +5,18 @@ import {
   upsertGmailClassifications,
   type GmailClassificationRow,
 } from "@/lib/db";
+import { isDemo } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  if (isDemo()) return NextResponse.json({ classifications: {} });
   return NextResponse.json({ classifications: getAllGmailClassifications() });
 }
 
 export async function PATCH(req: NextRequest) {
+  if (isDemo()) return NextResponse.json({ ok: true, written: 0 });
   try {
     const body = (await req.json()) as {
       classifications?: Record<string, Partial<GmailClassificationRow>>;
@@ -44,6 +47,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE() {
+  if (isDemo()) return NextResponse.json({ ok: true });
   clearGmailClassifications();
   return NextResponse.json({ ok: true });
 }

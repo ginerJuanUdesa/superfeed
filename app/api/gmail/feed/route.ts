@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchInbox } from "@/lib/gmail";
+import { isDemo, demoGmailItems } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +19,7 @@ interface FeedBody {
 }
 
 export async function POST(req: NextRequest) {
+  if (isDemo()) return NextResponse.json({ items: demoGmailItems(), nextPageTokens: {} });
   try {
     const body = (await req.json()) as FeedBody;
     const accounts = (body.accounts ?? [])

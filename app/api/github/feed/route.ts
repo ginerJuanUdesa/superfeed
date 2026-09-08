@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchFeed } from "@/lib/github";
+import { isDemo, demoGithubItems } from "@/lib/demo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +14,7 @@ interface Body {
 }
 
 export async function POST(req: NextRequest) {
+  if (isDemo()) return NextResponse.json({ items: demoGithubItems(), hasMore: false });
   try {
     const body = (await req.json()) as Body;
     const user = body.user?.trim();
