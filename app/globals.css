@@ -99,10 +99,19 @@ body {
 }
 
 .react-grid-item {
-  transition: transform 160ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* Animate both position AND size so that, when a dropped module makes its
+     row's tiles shrink to fit (and the newcomer resizes into the gap), the
+     boxes ease between sizes instead of snapping. */
+  transition:
+    transform 160ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    width 160ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    height 160ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
+/* The tile the user is actively dragging/resizing must track the cursor with no
+   lag — only the OTHER tiles reflowing around it should animate. */
 .react-grid-item.react-draggable-dragging { transition: none; z-index: 20; }
+.react-grid-item.resizing { transition: none; }
 /* Dragging or resizing must not paint a text selection anywhere —
    scoped by a class Grid.tsx toggles on <body> for the drag's duration. */
 body.superfeed-dragging,

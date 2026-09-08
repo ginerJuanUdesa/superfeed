@@ -10,6 +10,7 @@ import { ModuleInstance, ModuleType } from "@/lib/types";
 import { MODULES, getModule } from "@/modules/registry";
 import type { ModuleDescriptor } from "@/modules/types";
 import { flushPending, getCachedGrid, hydrate, saveGrid } from "@/lib/clientState";
+import { computeInsertion, type GridConfig } from "@/lib/gridPlacement";
 import { useIsMobile } from "@/lib/useIsMobile";
 
 const ResponsiveGrid = WidthProvider(GridLayout);
@@ -22,74 +23,13 @@ const DEFAULT_H = 5;
 const MIN_W = 2;
 const MIN_H = 3;
 
-/**
- * Find a slot for a new module without displacing anything.
- *
- * Priority is LOCATION first, SIZE second: if the drop anchor sits in a
- * pocket, we shrink the module to whatever fits at that anchor (largest
- * area wins), instead of drifting away to place it at full size elsewhere.
- * Only when nothing at all fits at the anchor do we search outward, and as a
- * last resort we drop below the bottom of the layout — guaranteed empty.
- */
-function findFreeSlot(
-  layout: Layout[],
-  wantX: number,
-  wantY: number
-): { x: number; y: number; w: number; h: number } {
-  const occ: boolean[][] = [];
-  const mark = (x: number, y: number, w: number, h: number) => {
-    for (let yy = y; yy < y + h; yy++) {
-      if (!occ[yy]) occ[yy] = new Array(COLS).fill(false);
-      for (let xx = x; xx < Math.min(x + w, COLS); xx++) occ[yy][xx] = true;
-    }
-  };
-  const fits = (x: number, y: number, w: number, h: number) => {
-    if (x < 0 || x + w > COLS || y < 0) return false;
-    for (let yy = y; yy < y + h; yy++) {
-      const row = occ[yy];
-      if (!row) continue;
-      for (let xx = x; xx < x + w; xx++) if (row[xx]) return false;
-    }
-    return true;
-  };
-  let maxRow = 0;
-  for (const it of layout) {
-    mark(it.x, it.y, it.w, it.h);
-    if (it.y + it.h > maxRow) maxRow = it.y + it.h;
-  }
-
-  const anchorY = Math.max(0, wantY);
-
-  // Enumerate every allowed (w, h) once, sorted by area DESC so the biggest
-  // shape that fits at the drop anchor wins.
-  const sizes: { w: number; h: number }[] = [];
-  for (let w = MIN_W; w <= DEFAULT_W; w++) {
-    for (let h = MIN_H; h <= DEFAULT_H; h++) {
-      sizes.push({ w, h });
-    }
-  }
-  sizes.sort((a, b) => b.w * b.h - a.w * a.h || b.w - a.w);
-
-  // Step 1: fit at the drop anchor. Nudge x left just enough for wider sizes
-  // to stay inside the grid so the user's row intent still wins.
-  for (const { w, h } of sizes) {
-    const x = Math.max(0, Math.min(COLS - w, wantX));
-    if (fits(x, anchorY, w, h)) return { x, y: anchorY, w, h };
-  }
-
-  // Step 2: nothing fits at the anchor — search outward from (wantX, anchorY),
-  // scanning right/left across each row, then row by row downward.
-  for (const { w, h } of sizes) {
-    const startX = Math.max(0, Math.min(COLS - w, wantX));
-    for (let dy = 0; dy < maxRow + 1; dy++) {
-      const y = anchorY + dy;
-      for (let x = startX; x <= COLS - w; x++) if (fits(x, y, w, h)) return { x, y, w, h };
-      for (let x = 0; x < startX; x++) if (fits(x, y, w, h)) return { x, y, w, h };
-    }
-  }
-
-  return { x: 0, y: maxRow, w: DEFAULT_W, h: DEFAULT_H };
-}
+const GRID_CFG: GridConfig = {
+  cols: COLS,
+  minW: MIN_W,
+  minH: MIN_H,
+  defaultW: DEFAULT_W,
+  defaultH: DEFAULT_H,
+};
 
 interface PersistedState {
   modules: ModuleInstance[];
@@ -118,13 +58,19 @@ export default function Grid() {
   const [layout, setLayout] = useState<Layout[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [previewSlot, setPreviewSlot] = useState<{
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  } | null>(null);
   const pendingTypeRef = useRef<ModuleType | null>(null);
+  // The id reserved for the module being dragged in from the rail. It lives in
+  // `layout` as a ghost while hovering, then becomes the real instance on drop.
+  const pendingIdRef = useRef<string | null>(null);
+  // Snapshot of the layout when the rail drag started. Every drag-over recomputes
+  // the candidate from THIS, so neighbors return to normal the moment the cursor
+  // moves to a spot that fits — and a cancelled drag restores it exactly.
+  const originalLayoutRef = useRef<Layout[] | null>(null);
+  // True while a live drop-preview is on screen. Suppresses layout persistence
+  // and RGL's own onLayoutChange so the preview never leaks to disk or fights us.
+  const previewActiveRef = useRef(false);
+  // Last hovered grid cell, so we only recompute when it actually changes.
+  const lastCellRef = useRef<string | null>(null);
   const movedRef = useRef(false);
   const dropzoneRef = useRef<HTMLDivElement | null>(null);
 
@@ -147,6 +93,8 @@ export default function Grid() {
 
   useEffect(() => {
     if (!hydrated) return;
+    // Never persist a transient drop-preview — only committed layouts.
+    if (previewActiveRef.current) return;
     // saveState → saveGrid already debounces server writes (250 ms) and
     // coalesces bursts. No extra timer here, so a checkbox tick is one
     // hop away from being on the wire.
@@ -208,6 +156,9 @@ export default function Grid() {
   };
 
   const onLayoutChange = (next: Layout[]) => {
+    // While a drop is being previewed we are the authority on the layout — RGL's
+    // own reconciliation must not overwrite the candidate we computed.
+    if (previewActiveRef.current) return;
     setLayout(next);
   };
 
@@ -222,50 +173,83 @@ export default function Grid() {
     };
   };
 
+  // Restore the pre-drag layout and clear all drag bookkeeping.
+  const cancelDrag = () => {
+    if (originalLayoutRef.current) setLayout(originalLayoutRef.current);
+    previewActiveRef.current = false;
+    pendingTypeRef.current = null;
+    pendingIdRef.current = null;
+    originalLayoutRef.current = null;
+    lastCellRef.current = null;
+  };
+
+  // Begin a rail drag: reserve an id and snapshot the layout so the preview can
+  // be recomputed from a stable base and fully reverted if the drag is aborted.
+  const beginRailDrag = (t: ModuleType) => {
+    pendingTypeRef.current = t;
+    pendingIdRef.current = makeId();
+    originalLayoutRef.current = layout;
+    previewActiveRef.current = false;
+    lastCellRef.current = null;
+    // A drag that ends anywhere other than the dropzone (released outside, or
+    // cancelled with Esc) fires `dragend` on the source tile but no drop — undo.
+    const onEnd = () => {
+      window.removeEventListener("dragend", onEnd);
+      if (pendingTypeRef.current) cancelDrag();
+    };
+    window.addEventListener("dragend", onEnd);
+  };
+
   const onDragOverDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    if (!pendingTypeRef.current) return;
+    const id = pendingIdRef.current;
+    const base = originalLayoutRef.current;
+    if (!pendingTypeRef.current || !id || !base) return;
     const { wantX, wantY } = wantCoordsFromEvent(e);
-    const slot = findFreeSlot(layout, wantX, wantY);
-    setPreviewSlot((prev) =>
-      prev && prev.x === slot.x && prev.y === slot.y && prev.w === slot.w && prev.h === slot.h
-        ? prev
-        : slot
-    );
+    const cellKey = `${wantX},${wantY}`;
+    if (lastCellRef.current === cellKey) return;
+    lastCellRef.current = cellKey;
+    const ins = computeInsertion(base, wantX, wantY, GRID_CFG);
+    const ghost: Layout = { i: id, ...ins.item, minW: MIN_W, minH: MIN_H };
+    previewActiveRef.current = true;
+    setLayout([...ins.layout, ghost]);
   };
 
   const onDragLeaveDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    // Only clear when the drag leaves the container itself, not when it crosses
-    // into a child element.
+    // Only react when the drag leaves the container itself, not when it crosses
+    // into a child element. The drag is still live, so keep the snapshot/id —
+    // just fold the preview back to normal until the cursor returns.
     if (dropzoneRef.current && e.relatedTarget instanceof Node) {
       if (dropzoneRef.current.contains(e.relatedTarget)) return;
     }
-    setPreviewSlot(null);
+    if (originalLayoutRef.current) setLayout(originalLayoutRef.current);
+    previewActiveRef.current = false;
+    lastCellRef.current = null;
   };
 
   const onNativeDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const type = pendingTypeRef.current;
-    if (!type) {
-      setPreviewSlot(null);
+    const id = pendingIdRef.current;
+    const base = originalLayoutRef.current;
+    const descriptor = type ? getModule(type) : undefined;
+    if (!type || !id || !base || !descriptor) {
+      cancelDrag();
       return;
     }
     const { wantX, wantY } = wantCoordsFromEvent(e);
-    const descriptor = getModule(type);
-    if (!descriptor) return;
-    const id = makeId();
+    const ins = computeInsertion(base, wantX, wantY, GRID_CFG);
     const title = descriptor.defaultTitle;
     const config = descriptor.defaultConfig?.() ?? {};
-    setModules((prev) => [...prev, { id, type, title, config }]);
-    setLayout((prev) => {
-      const slot = findFreeSlot(prev, wantX, wantY);
-      return [
-        ...prev,
-        { i: id, x: slot.x, y: slot.y, w: slot.w, h: slot.h, minW: MIN_W, minH: MIN_H },
-      ];
-    });
+    const placed: Layout = { i: id, ...ins.item, minW: MIN_W, minH: MIN_H };
+    // Clear preview bookkeeping BEFORE committing so the save effect fires.
+    previewActiveRef.current = false;
     pendingTypeRef.current = null;
-    setPreviewSlot(null);
+    pendingIdRef.current = null;
+    originalLayoutRef.current = null;
+    lastCellRef.current = null;
+    setModules((prev) => [...prev, { id, type, title, config }]);
+    setLayout([...ins.layout, placed]);
   };
 
   const moduleMap = useMemo(() => new Map(modules.map((m) => [m.id, m])), [modules]);
@@ -297,7 +281,7 @@ export default function Grid() {
   return (
     <div className="min-h-screen">
       <Toolbar
-        onDragStart={(t) => (pendingTypeRef.current = t)}
+        onDragStart={beginRailDrag}
         onOpenSettings={() => setSettingsOpen(true)}
       />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
@@ -329,7 +313,16 @@ export default function Grid() {
           >
             {layout.map((l) => {
               const m = moduleMap.get(l.i);
-              if (!m) return null;
+              if (!m) {
+                // A layout cell with no backing module instance only exists while
+                // a module is being dragged in from the rail — render it as a
+                // ghost so the live-adapting slot is visible.
+                return (
+                  <div key={l.i}>
+                    <DropGhost />
+                  </div>
+                );
+              }
               return (
                 <div key={l.i}>
                   <Module module={m} onRemove={removeModule} onUpdateConfig={updateConfig} />
@@ -337,7 +330,6 @@ export default function Grid() {
               );
             })}
           </ResponsiveGrid>
-          {previewSlot && <DropGhost slot={previewSlot} />}
         </div>
         {modules.length === 0 && <EmptyHint />}
       </div>
@@ -409,20 +401,14 @@ function DraggableTile({
   );
 }
 
-function DropGhost({ slot }: { slot: { x: number; y: number; w: number; h: number } }) {
-  const colPct = 100 / COLS;
-  const left = `calc(${slot.x * colPct}% + ${(slot.x * MARGIN) / COLS}px)`;
-  const width = `calc(${slot.w * colPct}% - ${((COLS - slot.w) * MARGIN) / COLS}px)`;
-  const top = slot.y * (ROW_HEIGHT + MARGIN);
-  const height = slot.h * ROW_HEIGHT + (slot.h - 1) * MARGIN;
+/** Fills the reserved grid cell while a module is dragged in from the rail. It
+ *  rides RGL's own item positioning, so it animates in step with the neighbors
+ *  that shift and resize around it. */
+function DropGhost() {
   return (
     <div
-      className="pointer-events-none absolute z-10"
+      className="pointer-events-none w-full h-full"
       style={{
-        left,
-        top,
-        width,
-        height,
         background: "var(--accent-dim)",
         boxShadow: "inset 0 0 0 1px var(--accent)",
         borderRadius: "var(--radius)",
