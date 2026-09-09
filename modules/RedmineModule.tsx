@@ -103,6 +103,23 @@ function severityColor(id: number | null, dark: boolean): string | null {
   return entry ? (dark ? entry.dark : entry.light) : null;
 }
 
+/* How a ticket was closed. Redmine only hands us the localized status name, so
+ * classify off it: anything mentioning "rechaz" is a rejection (red), anything
+ * "resuel"/"resolv" is resolved (green), and every other closed state falls
+ * back to a neutral grey badge carrying the raw status name. */
+function closedOutcome(
+  status: string,
+  R: typeof R_LIGHT
+): { label: string; color: string } | null {
+  const s = status.trim();
+  if (!s) return null;
+  const low = s.toLowerCase();
+  if (low.includes("rechaz")) return { label: s, color: R.danger };
+  if (low.includes("resuel") || low.includes("resolv"))
+    return { label: s, color: R.new };
+  return { label: s, color: R.closed };
+}
+
 /* Cache keys used to be `redmine-summary:<id>:<updatedAt>`; they're now just
  * `redmine-summary:<id>`. Without this, the key-format change would orphan
  * every previously-cached summary and re-run the slow LLM on the whole feed.
@@ -412,8 +429,9 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Modu
 function IssueCard({ item }: { item: RedmineIssue }) {
   const dark = useIsDark();
   const R = dark ? R_DARK : R_LIGHT;
-  const isNew = item.flag === "new";
   const sevColor = severityColor(item.priorityId, dark);
+  // Closed tickets carry an outcome badge (rejected vs resolved vs other).
+  const outcome = item.statusIsClosed ? closedOutcome(item.status, R) : null;
   // Stable per-ticket key (no updatedAt). The cached body carries the
   // updatedAt it was made for, so we can tell a stale open ticket from a
   // closed one without letting every updated_on bump churn a fresh key.
@@ -533,17 +551,19 @@ function IssueCard({ item }: { item: RedmineIssue }) {
           >
             {item.subject}
           </span>
-          {isNew && (
+          {outcome && (
             <span
-              className="shrink-0 px-1"
+              className="shrink-0 px-1 uppercase truncate max-w-[45%]"
               style={{
-                color: R.new,
-                border: `1px solid ${R.new}55`,
+                color: outcome.color,
+                border: `1px solid ${outcome.color}55`,
                 fontSize: 10,
                 fontWeight: "bold",
+                letterSpacing: "0.03em",
               }}
+              title={item.status}
             >
-              NEW
+              {outcome.label}
             </span>
           )}
           <span className="shrink-0 mono text-[12px]" style={{ color: R.faint }}>
