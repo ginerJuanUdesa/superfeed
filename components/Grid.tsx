@@ -57,6 +57,13 @@ export default function Grid() {
   const [modules, setModules] = useState<ModuleInstance[]>([]);
   const [layout, setLayout] = useState<Layout[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  // Gate the tile position/size CSS transition. It stays OFF for the very first
+  // painted layout and only turns ON a couple of frames later. WidthProvider
+  // positions tiles in two steps on mount (its hard-coded 1280px default, then
+  // the real measured width), and with the transition live that second step
+  // animates every tile sliding in from the left on each refresh. Snapping the
+  // first paint kills that; user drags/drops still animate normally.
+  const [animate, setAnimate] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const pendingTypeRef = useRef<ModuleType | null>(null);
   // The id reserved for the module being dragged in from the rail. It lives in
@@ -90,6 +97,22 @@ export default function Grid() {
       cancelled = true;
     };
   }, []);
+
+  // Enable position animations only after the board has painted at its real,
+  // measured width. Two rAFs guarantee we're past both WidthProvider's initial
+  // 1280px render and its post-measure correction, so the first frame the user
+  // sees is the final layout — no left-to-right slide-in on refresh.
+  useEffect(() => {
+    if (!hydrated || animate) return;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setAnimate(true));
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [hydrated, animate]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -294,7 +317,7 @@ export default function Grid() {
       >
         <div className="relative">
           <ResponsiveGrid
-            className="layout"
+            className={`layout${animate ? " grid-animate" : ""}`}
             layout={layout}
             cols={COLS}
             rowHeight={ROW_HEIGHT}

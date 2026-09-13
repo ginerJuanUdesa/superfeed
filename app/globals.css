@@ -108,6 +108,17 @@ body {
     height 160ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
+/* Kill that transition until the board has painted at its real measured width.
+   Grid.tsx adds `grid-animate` a couple of frames after mount; before that,
+   WidthProvider positions tiles twice (its hard-coded 1280px default, then the
+   measured width) and a live transition would slide every tile in from the left
+   on each refresh. A `:not()` gate (not a `.grid-animate` descendant selector)
+   keeps this from out-specifying the `transition: none` rules below that keep
+   the actively dragged/resized tile and the placeholder snappy. */
+.layout:not(.grid-animate) > .react-grid-item {
+  transition: none;
+}
+
 /* The tile the user is actively dragging/resizing must track the cursor with no
    lag — only the OTHER tiles reflowing around it should animate. */
 .react-grid-item.react-draggable-dragging { transition: none; z-index: 20; }
