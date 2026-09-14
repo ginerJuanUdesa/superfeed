@@ -15,6 +15,19 @@ Rules:
 - If the input says this is an UPDATE (not a new release), lead with what changed, e.g. "README rewritten with new benchmarks" or "added GGUF quants for the 8B variant". Use the commit title as the primary signal. Still do not repeat the repo name.
 - Do not include any other text, markdown, or code fences. JSON only.`;
 
+/** Sampling params some backends (e.g. vLLM diffusion models) reject with a
+ *  400. When they do, the error body names them — we strip the named ones and
+ *  retry. Only params we actually send need appear here. */
+const SAMPLING_PARAMS = [
+  "temperature",
+  "min_p",
+  "seed",
+  "min_tokens",
+  "logit_bias",
+  "bad_words",
+  "allowed_token_ids",
+] as const;
+
 interface SummarizeBody {
   item: HFItem;
   llmUrl?: string;
@@ -90,28 +103,62 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "no model configured or discoverable" }, { status: 400 });
     }
 
-    const upstream = await fetch(llmUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: buildUserPrompt(item) },
-        ],
-        temperature: 0.3,
-        max_tokens: 4096,
-        stream: false,
-        // This task wants a 14-word fragment, not a reasoning trace. Reasoning
-        // backends (Qwen3 & co. behind vLLM) otherwise burn the whole token
-        // budget in `reasoning_content` and leave `message.content` empty on a
-        // `finish_reason: "length"` — the summary then silently fails. Turning
-        // thinking off makes the call both reliable and several times faster.
-        chat_template_kwargs: { enable_thinking: false },
-        reasoning_effort: "none",
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
+    // Sampling params live in a mutable object so we can strip the ones a
+    // given backend rejects and retry. `temperature` is the usual offender:
+    // reasoning backends (Qwen3 & co.) want it, but diffusion models served
+    // through the same vLLM (e.g. diffusiongemma) 400 on it — along with
+    // min_p/seed/min_tokens/logit_bias/bad_words/allowed_token_ids. We only
+    // send `temperature` from that set, so dropping it clears the 400.
+    const params: Record<string, unknown> = {
+      model,
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: buildUserPrompt(item) },
+      ],
+      temperature: 0.3,
+      max_tokens: 4096,
+      stream: false,
+      // This task wants a 14-word fragment, not a reasoning trace. Reasoning
+      // backends (Qwen3 & co. behind vLLM) otherwise burn the whole token
+      // budget in `reasoning_content` and leave `message.content` empty on a
+      // `finish_reason: "length"` — the summary then silently fails. Turning
+      // thinking off makes the call both reliable and several times faster.
+      chat_template_kwargs: { enable_thinking: false },
+      reasoning_effort: "none",
+    };
+
+    const callUpstream = () =>
+      fetch(llmUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify(params),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+    let upstream = await callUpstream();
+
+    // Some backends reject sampling params they don't support with a 400 that
+    // names the offending fields. Strip whatever it names and retry once, so a
+    // model swap on the same endpoint doesn't silently break summaries.
+    if (upstream.status === 400) {
+      const body = await upstream.text().catch(() => "");
+      const stripped = SAMPLING_PARAMS.filter(
+        (p) => p in params && body.includes(p)
+      );
+      if (stripped.length) {
+        for (const p of stripped) delete params[p];
+        console.warn(
+          `[summarize] retrying without unsupported params [${stripped.join(", ")}] for ${item.author}/${item.name}`
+        );
+        upstream = await callUpstream();
+      } else {
+        console.error(`[summarize] LLM 400 for ${item.author}/${item.name}: ${body.slice(0, 200)}`);
+        return NextResponse.json(
+          { error: `LLM 400: ${body.slice(0, 200)}` },
+          { status: 502 }
+        );
+      }
+    }
 
     if (!upstream.ok) {
       const body = await upstream.text().catch(() => "");
