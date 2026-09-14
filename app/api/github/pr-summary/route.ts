@@ -13,6 +13,19 @@ Rules:
 - Base it on the description; if the description is empty or noise (checklists, template boilerplate), infer from the title instead.
 - Do not include any other text, markdown, or code fences. JSON only.`;
 
+/** Sampling params some backends (e.g. vLLM diffusion models) reject with a
+ *  400. When they do, the error body names them — we strip the named ones and
+ *  retry. Only params we actually send need appear here. */
+const SAMPLING_PARAMS = [
+  "temperature",
+  "min_p",
+  "seed",
+  "min_tokens",
+  "logit_bias",
+  "bad_words",
+  "allowed_token_ids",
+] as const;
+
 interface Body {
   title?: string;
   body?: string;
@@ -79,26 +92,58 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n");
 
-    const upstream = await fetch(llmUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.3,
-        max_tokens: 4096,
-        stream: false,
-        // Same rationale as the HF summarizer: a 16-word fragment needs no
-        // reasoning trace, and leaving thinking on lets reasoning backends burn
-        // the whole budget and return empty content on finish_reason "length".
-        chat_template_kwargs: { enable_thinking: false },
-        reasoning_effort: "none",
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
+    // Sampling params live in a mutable object so we can strip the ones a given
+    // backend rejects and retry. `temperature` is the usual offender: reasoning
+    // backends want it, but diffusion models served through the same vLLM 400 on
+    // it (along with min_p/seed/… ). We only send `temperature` from that set,
+    // so dropping it clears the 400. Mirrors /api/summarize.
+    const params: Record<string, unknown> = {
+      model,
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 4096,
+      stream: false,
+      // Same rationale as the HF summarizer: a 16-word fragment needs no
+      // reasoning trace, and leaving thinking on lets reasoning backends burn
+      // the whole budget and return empty content on finish_reason "length".
+      chat_template_kwargs: { enable_thinking: false },
+      reasoning_effort: "none",
+    };
+
+    const callUpstream = () =>
+      fetch(llmUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify(params),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+    let upstream = await callUpstream();
+
+    // Some backends reject sampling params they don't support with a 400 that
+    // names the offending fields. Strip whatever it names and retry once, so a
+    // model swap on the same endpoint doesn't silently break summaries.
+    if (upstream.status === 400) {
+      const b = await upstream.text().catch(() => "");
+      const stripped = SAMPLING_PARAMS.filter(
+        (p) => p in params && b.includes(p)
+      );
+      if (stripped.length) {
+        for (const p of stripped) delete params[p];
+        console.warn(
+          `[pr-summary] retrying without unsupported params [${stripped.join(", ")}]`
+        );
+        upstream = await callUpstream();
+      } else {
+        return NextResponse.json(
+          { error: `LLM 400: ${b.slice(0, 200)}` },
+          { status: 502 }
+        );
+      }
+    }
 
     if (!upstream.ok) {
       const b = await upstream.text().catch(() => "");

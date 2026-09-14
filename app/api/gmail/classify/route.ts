@@ -41,6 +41,19 @@ Examples:
   "Weekly digest: this week in AI" → alert:false, spam:true
   "Your Uber receipt" → alert:false, spam:false`;
 
+/** Sampling params some backends (e.g. vLLM diffusion models) reject with a
+ *  400. When they do, the error body names them — we strip the named ones and
+ *  retry. Only params we actually send need appear here. */
+const SAMPLING_PARAMS = [
+  "temperature",
+  "min_p",
+  "seed",
+  "min_tokens",
+  "logit_bias",
+  "bad_words",
+  "allowed_token_ids",
+] as const;
+
 interface ClassifyItem {
   id: string;
   from: string;
@@ -144,27 +157,59 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "no model configured or discoverable" }, { status: 400 });
     }
 
-    const upstream = await fetch(llmUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: buildUserPrompt(items) },
-        ],
-        temperature: 0.2,
-        max_tokens: 4096,
-        stream: false,
-        // Classification needs no chain-of-thought. With thinking on, a
-        // reasoning backend spends the whole token budget reasoning and either
-        // leaves content empty or truncates the JSON array mid-way, so the
-        // batch fails to parse and those emails never get a summary.
-        chat_template_kwargs: { enable_thinking: false },
-        reasoning_effort: "none",
-      }),
-      signal: AbortSignal.timeout(180_000),
-    });
+    // Sampling params live in a mutable object so we can strip the ones a given
+    // backend rejects and retry. `temperature` is the usual offender: reasoning
+    // backends want it, but diffusion models served through the same vLLM 400 on
+    // it (along with min_p/seed/… ). We only send `temperature` from that set,
+    // so dropping it clears the 400. Mirrors /api/summarize.
+    const params: Record<string, unknown> = {
+      model,
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: buildUserPrompt(items) },
+      ],
+      temperature: 0.2,
+      max_tokens: 4096,
+      stream: false,
+      // Classification needs no chain-of-thought. With thinking on, a
+      // reasoning backend spends the whole token budget reasoning and either
+      // leaves content empty or truncates the JSON array mid-way, so the
+      // batch fails to parse and those emails never get a summary.
+      chat_template_kwargs: { enable_thinking: false },
+      reasoning_effort: "none",
+    };
+
+    const callUpstream = () =>
+      fetch(llmUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify(params),
+        signal: AbortSignal.timeout(180_000),
+      });
+
+    let upstream = await callUpstream();
+
+    // Some backends reject sampling params they don't support with a 400 that
+    // names the offending fields. Strip whatever it names and retry once, so a
+    // model swap on the same endpoint doesn't silently break classification.
+    if (upstream.status === 400) {
+      const body = await upstream.text().catch(() => "");
+      const stripped = SAMPLING_PARAMS.filter(
+        (p) => p in params && body.includes(p)
+      );
+      if (stripped.length) {
+        for (const p of stripped) delete params[p];
+        console.warn(
+          `[gmail/classify] retrying without unsupported params [${stripped.join(", ")}]`
+        );
+        upstream = await callUpstream();
+      } else {
+        return NextResponse.json(
+          { error: `LLM 400: ${body.slice(0, 200)}` },
+          { status: 502 }
+        );
+      }
+    }
     if (!upstream.ok) {
       const body = await upstream.text().catch(() => "");
       return NextResponse.json(
