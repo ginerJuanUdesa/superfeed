@@ -495,16 +495,17 @@ function IssueCard({ item }: { item: RedmineIssue }) {
       if (raw) {
         const cached = JSON.parse(raw) as IssueSummary;
         setSummary(cached);
-        // Closed tickets never re-summarize — their content is final and the
-        // slow local LLM shouldn't re-run just because the status flipped.
-        // Open tickets refresh only when their content actually moved on.
-        if (item.statusIsClosed || cached.updatedAt === item.updatedAt) return;
+        // One summary per ticket, kept as-is. A cached summary is final: we
+        // don't re-run the slow local LLM just because the ticket got new
+        // activity (a new note / updated_on bump). Only a real cache miss
+        // triggers a fetch.
+        return;
       }
     } catch {
       // ignore
     }
     void fetchSummary();
-  }, [cacheKey, fetchSummary, item.statusIsClosed, item.updatedAt]);
+  }, [cacheKey, fetchSummary, item.id]);
 
   const subjectColor = item.statusIsClosed ? R.closed : R.link;
   const summaryText = summary?.headline ?? "";

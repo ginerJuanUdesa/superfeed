@@ -23,6 +23,19 @@ Rules:
 - Write in the same language as the issue content (Spanish issue → Spanish summary).
 - JSON only. No prose, no markdown fences.`;
 
+/** Sampling params some backends (e.g. vLLM diffusion models) reject with a
+ *  400. When they do, the error body names them — we strip the named ones and
+ *  retry. Only params we actually send need appear here. */
+const SAMPLING_PARAMS = [
+  "temperature",
+  "min_p",
+  "seed",
+  "min_tokens",
+  "logit_bias",
+  "bad_words",
+  "allowed_token_ids",
+] as const;
+
 interface SummarizeBody {
   issueId: number;
   llmUrl?: string;
@@ -121,26 +134,58 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const upstream = await fetch(llmUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: buildUserPrompt(issue) },
-        ],
-        temperature: 0.2,
-        max_tokens: 4096,
-        stream: false,
-        // Same reason as /api/summarize: reasoning backends otherwise spend the
-        // whole token budget thinking and leave message.content empty. Turn
-        // thinking off so the call is reliable and several times faster.
-        chat_template_kwargs: { enable_thinking: false },
-        reasoning_effort: "none",
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
+    // Sampling params live in a mutable object so we can strip the ones a given
+    // backend rejects and retry. `temperature` is the usual offender: reasoning
+    // backends want it, but diffusion models served through the same vLLM 400 on
+    // it (along with min_p/seed/… ). We only send `temperature` from that set,
+    // so dropping it clears the 400. Mirrors /api/summarize.
+    const params: Record<string, unknown> = {
+      model,
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: buildUserPrompt(issue) },
+      ],
+      temperature: 0.2,
+      max_tokens: 4096,
+      stream: false,
+      // Same reason as /api/summarize: reasoning backends otherwise spend the
+      // whole token budget thinking and leave message.content empty. Turn
+      // thinking off so the call is reliable and several times faster.
+      chat_template_kwargs: { enable_thinking: false },
+      reasoning_effort: "none",
+    };
+
+    const callUpstream = () =>
+      fetch(llmUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify(params),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+    let upstream = await callUpstream();
+
+    // Some backends reject sampling params they don't support with a 400 that
+    // names the offending fields. Strip whatever it names and retry once, so a
+    // model swap on the same endpoint doesn't silently break summaries.
+    if (upstream.status === 400) {
+      const body = await upstream.text().catch(() => "");
+      const stripped = SAMPLING_PARAMS.filter(
+        (p) => p in params && body.includes(p)
+      );
+      if (stripped.length) {
+        for (const p of stripped) delete params[p];
+        console.warn(
+          `[redmine/summarize] retrying without unsupported params [${stripped.join(", ")}] for #${issueId}`
+        );
+        upstream = await callUpstream();
+      } else {
+        return NextResponse.json(
+          { error: `LLM 400: ${body.slice(0, 200)}` },
+          { status: 502 }
+        );
+      }
+    }
 
     if (!upstream.ok) {
       const body = await upstream.text().catch(() => "");
