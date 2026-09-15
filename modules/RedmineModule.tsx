@@ -55,6 +55,7 @@ const R_LIGHT = {
   closed: "#999999",
   danger: "#b02020",
   new: "#1a7f2a",
+  planned: "#8a6d3b",
   summaryBg: "#fffde8",
   summaryBorder: "#e8dc8f",
 };
@@ -79,6 +80,7 @@ const R_DARK = {
   closed: "#8a8a8a",
   danger: "#f28b82",
   new: "#7fc48a",
+  planned: "#d1b06b",
   summaryBg: "#3a3416",
   summaryBorder: "#6b5f24",
 };
@@ -118,6 +120,14 @@ function closedOutcome(
   if (low.includes("resuel") || low.includes("resolv"))
     return { label: s, color: R.new };
   return { label: s, color: R.closed };
+}
+
+/* "Para planificar" — an open ticket that isn't actionable yet (still needs
+ * scoping/planning before anyone works it). Match on the stem so any wording
+ * variant ("Para planificar", "A planificar") is caught. These sink to the
+ * bottom of the open queue and carry a muted badge. */
+function isToPlan(status: string): boolean {
+  return status.toLowerCase().includes("planific");
 }
 
 /* Cache keys used to be `redmine-summary:<id>:<updatedAt>`; they're now just
@@ -281,14 +291,17 @@ export default function RedmineModule({ module, onRemove, onUpdateConfig }: Modu
   useEffect(() => () => abortRef.current?.abort(), []);
 
   // Open tickets lead, sorted by severity then recency (the working queue).
-  // Closed ones drop below a "Cerrados" divider, most-recently-closed first —
-  // priority is meaningless once a ticket is done.
+  // "Para planificar" tickets are open but not yet actionable, so they sink
+  // below the rest of the open queue regardless of priority. Closed ones drop
+  // below a "Cerrados" divider, most-recently-closed first — priority is
+  // meaningless once a ticket is done.
   const openItems = useMemo(() => {
     if (!items) return null;
     return items
       .filter((it) => !it.statusIsClosed)
       .sort(
         (a, b) =>
+          Number(isToPlan(a.status)) - Number(isToPlan(b.status)) ||
           (b.priorityId ?? 0) - (a.priorityId ?? 0) ||
           Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
       );
@@ -432,6 +445,8 @@ function IssueCard({ item }: { item: RedmineIssue }) {
   const sevColor = severityColor(item.priorityId, dark);
   // Closed tickets carry an outcome badge (rejected vs resolved vs other).
   const outcome = item.statusIsClosed ? closedOutcome(item.status, R) : null;
+  // Open-but-not-actionable tickets ("Para planificar") carry a muted badge.
+  const toPlan = !item.statusIsClosed && isToPlan(item.status);
   // Stable per-ticket key (no updatedAt). The cached body carries the
   // updatedAt it was made for, so we can tell a stale open ticket from a
   // closed one without letting every updated_on bump churn a fresh key.
@@ -565,6 +580,21 @@ function IssueCard({ item }: { item: RedmineIssue }) {
               title={item.status}
             >
               {outcome.label}
+            </span>
+          )}
+          {toPlan && (
+            <span
+              className="shrink-0 px-1 uppercase truncate max-w-[45%]"
+              style={{
+                color: R.planned,
+                border: `1px solid ${R.planned}55`,
+                fontSize: 10,
+                fontWeight: "bold",
+                letterSpacing: "0.03em",
+              }}
+              title={item.status}
+            >
+              {item.status}
             </span>
           )}
           <span className="shrink-0 mono text-[12px]" style={{ color: R.faint }}>
