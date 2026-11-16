@@ -1,11 +1,19 @@
 /**
- * Redmine REST client. Talks to the Bitnami-packaged Redmine at
- * `${REDMINE_URL}` (subpath `/redmine` is already baked into the URL).
+ * Redmine REST client. Talks to the Redmine at `${REDMINE_URL}`.
  * All calls go server-side — the API key never touches the browser.
+ * `REDMINE_HEADERS` ("Name: value, Name2: value2") adds headers to every call,
+ * e.g. the `X-Soflex-Api` bot token Cloudflare requires in front of the API.
  */
 
 const BASE = (process.env.REDMINE_URL ?? "").replace(/\/+$/, "");
 const KEY = process.env.REDMINE_API_KEY ?? "";
+const EXTRA_HEADERS: Record<string, string> = Object.fromEntries(
+  (process.env.REDMINE_HEADERS ?? "")
+    .split(",")
+    .map((h) => h.split(":"))
+    .filter((kv) => kv.length >= 2 && kv[0].trim())
+    .map(([k, ...v]) => [k.trim(), v.join(":").trim()])
+);
 
 export interface RedmineProject {
   id: number;
@@ -102,7 +110,7 @@ async function get<T>(path: string, timeoutMs = 15_000): Promise<T> {
   assertConfigured();
   const url = `${BASE}${path}`;
   const res = await fetch(url, {
-    headers: { "X-Redmine-API-Key": KEY, Accept: "application/json" },
+    headers: { ...EXTRA_HEADERS, "X-Redmine-API-Key": KEY, Accept: "application/json" },
     signal: AbortSignal.timeout(timeoutMs),
     cache: "no-store",
   });
